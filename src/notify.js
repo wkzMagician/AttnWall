@@ -36,12 +36,16 @@ export class NotificationScheduler {
     await this.send({kind:'instant',title:'Instant · '+message.title,body:message.body.slice(0,180),sessionId:message.session_id});
   }
   async send(payload,{deviceId:targetId=null,broadcast=true}={}){
-    if(broadcast)this.broadcast('notification',payload);
+    // Include the server-authoritative released unread total for background PWA badges.
+    // Test pushes must not replace an existing badge with an unrelated count.
+    const notice=['batch','instant'].includes(payload.kind)
+      ? {...payload,unreadCount:this.store.readyUnreadCount()}:payload;
+    if(broadcast)this.broadcast('notification',notice);
     const rows=this.store.subscriptions().filter(row=>!targetId||deviceId(row.endpoint)===targetId);
     const results=await Promise.all(rows.map(async row=>{
       const status={id:deviceId(row.endpoint),name:row.device_name,accepted:false,code:null,reason:null};
       try{
-        const r=await webpush.sendNotification(JSON.parse(row.subscription),JSON.stringify(payload),
+        const r=await webpush.sendNotification(JSON.parse(row.subscription),JSON.stringify(notice),
           {TTL:payload.kind==='test'?120:3600,urgency:['instant','test'].includes(payload.kind)?'high':'normal'});
         status.code=r.statusCode;status.accepted=r.statusCode>=200&&r.statusCode<300;
       }catch(e){

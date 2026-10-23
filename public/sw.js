@@ -5,7 +5,14 @@ self.addEventListener('push',event=>{
   try{payload={...payload,...event.data.json()};}catch{}
   const opts={body:payload.body||'',icon:'/icon.svg',badge:'/icon.svg',tag:payload.kind==='batch'?'attnwall-batch':undefined,
     data:{url:payload.sessionId?'/?session='+encodeURIComponent(payload.sessionId):'/'}};
-  event.waitUntil(self.registration.showNotification(payload.title,opts));
+  // A numeric icon badge is separate from NotificationOptions.badge (an image).
+  // Do not change the badge for diagnostic test pushes or legacy payloads.
+  const count=payload.unreadCount;
+  const badgeTask=(Number.isSafeInteger(count)&&count>=0&&typeof self.navigator?.setAppBadge==='function')
+    ? Promise.resolve().then(()=>count===0&&typeof self.navigator.clearAppBadge==='function'
+      ? self.navigator.clearAppBadge():self.navigator.setAppBadge(count)).catch(()=>{})
+    : Promise.resolve();
+  event.waitUntil(Promise.all([self.registration.showNotification(payload.title,opts),badgeTask]));
 });
 self.addEventListener('notificationclick',event=>{
   event.notification.close();

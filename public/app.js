@@ -1,3 +1,4 @@
+import {createBadgeSynchronizer} from './app-badge.js';
 const $=(id)=>document.getElementById(id);
 const state={sessions:[],inbox:[],unreadCount:0,settings:{},selected:null,view:'inbox',historyData:null,historyRequested:new Set(),instantOverride:new Map(),pushDevices:[],pushReport:null,nextBatchAt:null,queuedNormal:0,pushSubscribed:false,refreshing:false};
 const escapeHtml=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -5,6 +6,9 @@ const esc=escapeHtml;
 const when=(ts)=>new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',month:'2-digit',day:'2-digit'}).format(new Date(ts));
 const humanTime=(ts)=>new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit'}).format(new Date(ts));
 let toastTimer,refreshTimer,sse;
+// Only the released unread total is ever passed to the OS badge.
+const syncAppBadge=createBadgeSynchronizer(navigator);
+
 function toast(text){$('toast').textContent=text;$('toast').classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.add('hidden'),3200);}
 async function api(method,path,data){
   const resp=await fetch(path,{method,headers:{'Content-Type':'application/json'},credentials:'same-origin',body:data===undefined?undefined:JSON.stringify(data)});
@@ -94,6 +98,7 @@ function render(){
   $('stat-queue').textContent=state.queuedNormal;
   $('session-count').textContent=matching.length;
   $('unread-count').textContent=state.unreadCount;
+  void syncAppBadge(state.unreadCount);
   $('inbox-window').textContent=state.unreadCount>state.inbox.length?'(显示最近 '+state.inbox.length+' 条)':'';
   $('session-list').innerHTML=visible.length?visible.map(sessionNode).join(''):
     '<div class="subtle" style="padding:12px">此时间范围内没有活跃会话。你可以调整筛选范围查看更早的会话。</div>';
@@ -287,7 +292,7 @@ async function activatePush(){
   let sub=await reg.pushManager.getSubscription();
   if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:vapidBytes((await api('GET','/api/state')).pushPublicKey)});
   await api('POST','/api/push',{subscription:sub.toJSON(),name:navigator.platform||'Browser'});
-  state.pushSubscribed=true;toast('设备通知已启用');
+  state.pushSubscribed=true;await syncAppBadge(state.unreadCount);toast('设备通知已启用');
 }
 async function detectPush(){
   try{if('serviceWorker'in navigator){
@@ -417,7 +422,7 @@ $('push-device-list').addEventListener('click',async e=>{
   finally{b.disabled=false;}
 });
 $('notify-button').addEventListener('click',()=>activatePush().catch(e=>toast(e.message)));
-$('logout').addEventListener('click',async()=>{await api('POST','/api/logout');showLogin();});
+$('logout').addEventListener('click',async()=>{await api('POST','/api/logout');void syncAppBadge(0);showLogin();});
 $('attach-button').addEventListener('click',()=>$('add-source-dialog').showModal());
 $('add-source-cancel').addEventListener('click',()=>$('add-source-dialog').close());
 $('add-source-dialog').addEventListener('click',e=>{

@@ -9,7 +9,7 @@
     "test": "node --test --test-concurrency=2",
     "test:extension": "node --test test/browser-extension-e2e.test.js",
     "test:live:codex": "node --test test/live-codex.test.js",
-    "check": "node --check src/server.js && node --check src/adapters.js && node --check src/codex-queue.js && node --check src/core.js && node --check src/connector.js && node --check src/browser-bridge.js && node --check public/app.js && node --check extensions/browser/dom.js && node --check extensions/browser/content.js && node --check extensions/browser/background.js && node --check extensions/browser/popup.js"
+    "check": "node --check src/server.js && node --check src/adapters.js && node --check src/codex-queue.js && node --check src/core.js && node --check src/connector.js && node --check src/browser-bridge.js && node --check public/app.js && node --check public/app-badge.js && node --check public/sw.js && node --check extensions/browser/dom.js && node --check extensions/browser/content.js && node --check extensions/browser/background.js && node --check extensions/browser/popup.js"
   },
   "engines": {
     "node": ">=22.13.0"

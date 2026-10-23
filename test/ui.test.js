@@ -48,17 +48,25 @@ test('Chrome E2E: inbox, mark all (>100), session, history, pagination, reply, I
       completions:[{runtime:'codex',nativeId:session,runId:'large-run'}]});
     browser=await chromium.launch({executablePath:chrome,headless:true,args:['--no-sandbox','--disable-gpu']});
     const page=await browser.newPage({viewport:{width:1350,height:900}});
+    await page.addInitScript(()=>{
+      window.attnwallBadgeCalls=[];
+      Object.defineProperty(navigator,'setAppBadge',{configurable:true,value:async count=>window.attnwallBadgeCalls.push(['set',count])});
+      Object.defineProperty(navigator,'clearAppBadge',{configurable:true,value:async()=>window.attnwallBadgeCalls.push(['clear'])});
+    });
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.goto(origin);
     await page.locator('#access-token').fill(secrets.accessToken);
     await page.locator('#login-form button[type=submit]').click();
     await page.locator('#stat-queue').getByText('1').waitFor();
     assert.equal(await page.locator('#stat-unread').innerText(),'0','Pending normal messages are hidden until batch release');
+    await page.waitForFunction(()=>window.attnwallBadgeCalls.some(x=>x[0]==='clear'));
+    assert.equal(await page.evaluate(()=>window.attnwallBadgeCalls.some(x=>x[0]==='set')),false,'Pending messages must not set the OS badge');
     assert.equal(await page.locator('#inbox-items .inbox-card').count(),0,'No early inbox exposure during a quiet window');
     const db=new DatabaseSync(join(dir,'.data/attnwall.db'));
     try{db.prepare("UPDATE messages SET notified_at=? WHERE role='agent' AND notified_at IS NULL").run(Date.now());}finally{db.close();}
     await page.reload();
     await page.locator('#stat-unread').getByText('140').waitFor();
+    await page.waitForFunction(()=>window.attnwallBadgeCalls.some(x=>x[0]==='set'&&x[1]===140));
     assert.equal(await page.locator('#inbox-items .inbox-card').count(),1,'One inbox card per released conversation');
     assert.match(await page.locator('#inbox-items .inbox-group-count').innerText(),/140 条未读消息/);
     assert.equal(await page.locator('#session-range').inputValue(),'7d','Default 7-day filter');
@@ -80,6 +88,8 @@ test('Chrome E2E: inbox, mark all (>100), session, history, pagination, reply, I
     assert.equal(await page.locator('#session-list .session-entry').count(),1);
     await page.locator('#mark-all').click();
     await page.locator('#stat-unread').getByText('0').waitFor();
+    await page.waitForFunction(()=>window.attnwallBadgeCalls.some(x=>x[0]==='clear'));
+    assert.deepEqual(await page.evaluate(()=>window.attnwallBadgeCalls.at(-1)),['clear'],'Mark all read clears the icon badge');
     await page.locator('#session-list .session-entry').first().click();
     await page.locator('#conversation-view').waitFor({state:'visible'});
     assert.match(await page.locator('#conversation-name').innerText(),/Browser testing conversation/);
@@ -117,6 +127,7 @@ test('Chrome E2E: inbox, mark all (>100), session, history, pagination, reply, I
     await page.getByText('Original assistant answer').waitFor();
     await page.locator('#history-older').waitFor({state:'visible'});
     await page.locator('#history-older').click();
+    await page.locator('.conversation-messages .message').nth(9).waitFor();
     assert.equal(await page.locator('.conversation-messages .message').count(),10);
     await page.locator('#inbox-nav').click();
     await page.locator('#inbox-view').waitFor({state:'visible'});

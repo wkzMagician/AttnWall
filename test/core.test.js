@@ -213,11 +213,13 @@ test('Event-anchored batching is idle until first arrival and restarts after lon
   assert.equal(notices.length,0);assert.equal(s.pendingNotifications().length,1);
   await sender.tick(Date.parse('2026-10-21T08:00:00+08:00'));
   assert.equal(notices.length,1);assert.equal(notices[0].kind,'batch');
+  assert.equal(notices[0].unreadCount,1,'Badge includes released unread, not pending messages');
   assert.equal(s.pendingNotifications().length,0);
   assert.equal(sender.nextAt,null,'No deadline after the pending batch has emptied');
   const instant=s.message({sessionId:sid,body:'Urgent',priority:'instant'});
   await sender.instant({...instant,title:'Task A'});
   assert.equal(notices.length,2);assert.equal(notices[1].kind,'instant');
+  assert.equal(notices[1].unreadCount,s.readyUnreadCount(),'Instant badge uses the current server unread total');
   assert.equal(s.lastBatchAt(),Date.parse('2026-10-21T08:00:00+08:00'));
   sender.reset();
   assert.equal(sender.nextAt,null);

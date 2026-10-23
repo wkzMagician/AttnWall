@@ -1,0 +1,17 @@
+{
+  "name": "AttnWall — Agent Attention Firewall",
+  "short_name": "AttnWall",
+  "description": "Your attention. Your rules.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f1faff",
+  "theme_color": "#eef8ff",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

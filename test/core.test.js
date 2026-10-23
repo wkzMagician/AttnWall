@@ -1,0 +1,224 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {inDnd,nextBoundary,Store,secretEqual} from '../src/core.js';
+import {NotificationScheduler} from '../src/notify.js';import {DshAdapter} from '../src/adapters.js';
+
+function fixture(fn){
+  const dir=mkdtempSync(join(tmpdir(),'attnwall-test-'));
+  const store=new Store(join(dir,'test.db'));
+  return Promise.resolve().then(()=>fn(store,dir)).finally(()=>{store.close();rmSync(dir,{recursive:true,force:true});});
+}
+test('DSH quota errors appear as Instant diagnostic messages rather than silent success',()=>{
+  const messages=[],sessions=[];
+  const a=new DshAdapter(m=>messages.push(m),s=>sessions.push(s));
+  a.rpc.emit('notification','session.event',{sessionId:'example',event:{type:'turn/end',seq:42,
+    data:{reason:{kind:'error',error:{code:'QUOTA',status:402,message:'Insufficient Balance'}}}}});
+  assert.equal(messages.length,1);
+  assert.equal(messages[0].priority,'instant');
+  assert.equal(messages[0].kind,'diagnostic');
+  assert.match(messages[0].body,/余额或配额不足/);
+  assert.equal(sessions.at(-1).status,'error');
+  a.rpc.emit('notification','session.event',{sessionId:'example',event:{type:'turn/end',seq:44,
+    data:{reason:{kind:'error',error:{code:'MISSING_CREDENTIAL'}}}}});
+  assert.match(messages.at(-1).body,/没有可用的 API Key/);
+  a.rpc.emit('notification','session.event',{sessionId:'example',event:{type:'turn/end',seq:43,data:{reason:{kind:'completed'}}}});
+  assert.equal(messages.length,2);
+  assert.equal(sessions.at(-1).status,'idle');
+});
+test('DND handles crossing midnight, daytime windows and no-op',()=>{
+  const cfg={dndEnabled:true,dndStart:'00:00',dndEnd:'08:00',timeZone:'Asia/Singapore'};
+  assert.equal(inDnd(Date.parse('2026-10-21T02:00:00+08:00'),cfg),true);
+  assert.equal(inDnd(Date.parse('2026-10-21T09:00:00+08:00'),cfg),false);
+  cfg.dndStart='22:00';cfg.dndEnd='07:30';
+  assert.equal(inDnd(Date.parse('2026-10-21T23:00:00+08:00'),cfg),true);
+  assert.equal(inDnd(Date.parse('2026-10-21T12:00:00+08:00'),cfg),false);
+  cfg.dndStart='12:00';cfg.dndEnd='13:00';
+  assert.equal(inDnd(Date.parse('2026-10-21T12:25:00+08:00'),cfg),true);
+  cfg.dndEnabled=false;assert.equal(inDnd(Date.now(),cfg),false);
+});
+test('Minimum boundary and constant-time secret comparison',()=>{
+  assert.equal(nextBoundary(25*60000,20),40*60000);
+  assert.equal(nextBoundary(40*60000,20),60*60000);
+  assert.equal(secretEqual('abc','abc'),true);
+  assert.equal(secretEqual('abc','abcd'),false);
+});
+test('Persist settings, validate and ensure silent imports do not notify',()=>fixture((s,dir)=>{
+  const sid=s.session({runtime:'codex',nativeId:'thread01',title:'Project One'});
+  const m1=s.message({sessionId:sid,externalId:'item1',body:'Hello',runId:'turn-1'});
+  const m2=s.message({sessionId:sid,externalId:'item1',body:'Hello again'});
+  assert.ok(m1);assert.equal(m2,null);
+  assert.equal(s.pendingNotifications().length,0,'Progress is not queued before completion');
+  s.completeRun(sid,'turn-1');
+  assert.equal(s.pendingNotifications().length,1);
+  s.message({sessionId:sid,externalId:'old',body:'Previously completed',silent:true});
+  assert.equal(s.pendingNotifications().length,1);
+  assert.equal(s.inbox().length,1);
+  const msgs=s.claimNotificationBatch(100);
+  assert.equal(msgs.length,1);assert.equal(s.pendingNotifications().length,0);
+  s.updateSettings({intervalMin:30,timeZone:'Asia/Singapore'});
+  s.noteBatch(98765);
+  assert.equal(s.lastBatchAt(),98765);
+  assert.throws(()=>s.updateSettings({intervalMin:0}));
+  assert.throws(()=>s.updateSettings({dndStart:'99:00'}));
+}));
+test('Attention gate hides ordinary messages until batch release while Instant stays visible',()=>fixture(s=>{
+  const session=s.session({runtime:'codex',nativeId:'focus-thread'});
+  const normal=s.message({sessionId:session,externalId:'quiet-normal',body:'Quiet ordinary message',runId:'turn-quiet'});
+  assert.equal(s.unreadCount(),1,'Raw unread counts persist');
+  assert.equal(s.readyInbox().length,0,'Inbox must not leak pending ordinary messages');
+  assert.equal(s.readyUnreadCount(),0);
+  assert.equal(s.readySessions()[0].unread,0,'Sidebar badge must not reveal pending messages');
+  const urgent=s.message({sessionId:session,externalId:'instant-one',body:'Urgent approval',priority:'instant',kind:'approval'});
+  assert.equal(s.readyInbox().length,1);
+  assert.equal(s.readyInbox()[0].id,urgent.id);
+  assert.equal(s.readyUnreadCount(),1);
+  s.completeRun(session,'turn-quiet');
+  s.claimNotificationBatch(Date.now());
+  assert.equal(s.readyInbox().length,2,'Batch release makes completed run visible');
+  assert.equal(s.readyUnreadCount(),2);
+  assert.equal(s.readySessions()[0].unread,2);
+  s.readMessages([normal.id,urgent.id]);
+  assert.equal(s.readyUnreadCount(),0);
+}));
+test('Real activity time is independent from polling, historical sync, and UI last-access time',()=>fixture(s=>{
+  const old=Date.now()-20*86400000;
+  const id=s.session({runtime:'codex',nativeId:'old',title:'Old thread',activityAt:old});
+  assert.equal(s.sessionById(id).activity_at,old);
+  s.session({runtime:'codex',nativeId:'old',title:'Old thread',status:'idle',updatedAt:Date.now()});
+  assert.equal(s.sessionById(id).activity_at,old,'Polling must not make old sessions look recent');
+  s.message({sessionId:id,externalId:'old-message',body:'Archived response',createdAt:old+120000,silent:true});
+  assert.equal(s.sessionById(id).activity_at,old,'Historical messages cannot change activity time');
+  const recent=Date.now();
+  s.message({sessionId:id,externalId:'new-message',body:'New response',createdAt:recent});
+  assert.equal(s.sessionById(id).activity_at,recent,'New agent work makes the session recent');
+  s.session({runtime:'codex',nativeId:'old',activityAt:old});
+  assert.equal(s.sessionById(id).activity_at,recent,'Old metadata cannot roll back activity');
+  const dsh=s.session({runtime:'dsh',nativeId:'newly-attached'});
+  assert.ok(Date.now()-s.sessionById(dsh).activity_at<2000,'Manual DSH attachment is initially recent');
+}));
+test('Mark all (>100) and session-specific read updates are transactional and survive pagination',()=>fixture(s=>{
+  const a=s.session({runtime:'codex',nativeId:'a'}),b=s.session({runtime:'codex',nativeId:'b'});
+  for(let i=0;i<170;i++)s.message({sessionId:a,externalId:'a'+i,body:'Agent '+i,createdAt:1000+i});
+  for(let i=0;i<40;i++)s.message({sessionId:b,externalId:'b'+i,body:'B '+i,createdAt:2000+i});
+  assert.equal(s.unreadCount(),210);assert.equal(s.inbox().length,100);
+  const page=s.messagePage(a,{limit:120});
+  assert.equal(page.messages.length,120);assert.equal(page.hasMore,true);
+  const earliest=page.messages[0];
+  const old=s.messagePage(a,{limit:120,beforeTime:earliest.created_at,beforeId:earliest.id});
+  assert.equal(old.messages.length,50);assert.equal(old.hasMore,false);
+  assert.equal(s.markAllRead(a),170);assert.equal(s.unreadCount(),40);
+  assert.equal(s.markAllRead(),40);assert.equal(s.unreadCount(),0);
+  assert.equal(s.pendingNotifications().length,0);
+}));
+test('Codex history requests are idempotent, host-scoped and report completion',()=>fixture(s=>{
+  const a=s.session({host:'desktop',runtime:'codex',nativeId:'thread-a'});
+  const b=s.session({host:'remote',runtime:'codex',nativeId:'thread-b'});
+  assert.equal(s.requestHistory(a).state,'queued');
+  assert.equal(s.requestHistory(a).state,'queued');
+  assert.equal(s.claimHistory('remote').length,0);
+  const claimed=s.claimHistory('desktop');
+  assert.equal(claimed.length,1);assert.equal(claimed[0].native_id,'thread-a');
+  assert.equal(s.claimHistory('desktop').length,0);
+  s.completeHistory(a);
+  assert.equal(s.historyStatus(a).state,'complete');
+  assert.equal(s.requestHistory(a).state,'complete');
+  assert.equal(s.requestHistory(a,{force:true}).state,'queued');
+  s.completeHistory(a,'Reader incompatible');
+  assert.equal(s.historyStatus(a).state,'error');
+  assert.equal(s.requestHistory(a).state,'queued');
+}));
+test('Codex reader imports both user and assistant textual history',async()=>{
+  const {CodexAdapter}=await import('../src/adapters.js');
+  const a=new CodexAdapter();
+  a.ready=true;
+  a.rpc.request=async()=>({thread:{turns:[{id:'turn1',startedAt:1700000000,
+    items:[{type:'userMessage',id:'u',content:[{type:'text',text:'Original question'},{type:'localImage',path:'ignored'}]},
+      {type:'reasoning',id:'r',summary:[]},
+      {type:'agentMessage',id:'a',text:'Assistant answer'}]}]}});
+  a.readRecent=async()=>(await a.rpc.request()).thread;
+  const result=await a.history('thread1');
+  assert.deepEqual(result.map(x=>x.role),['user','agent']);
+  assert.deepEqual(result.map(x=>x.body),['Original question','Assistant answer']);
+  assert.ok(result.every(x=>x.silent));
+  assert.equal(result[0].createdAt,1700000000*1000);
+});
+test('Replies are routed to their exact original session and deduplicated',()=>fixture(s=>{
+  const a=s.session({host:'host1',runtime:'codex',nativeId:'same',title:'A'});
+  const b=s.session({host:'host2',runtime:'codex',nativeId:'same',title:'B'});
+  const c=s.session({host:'host1',runtime:'dsh',nativeId:'same',title:'C'});
+  const r=s.queueReply(b,'Fix this', 'stable-request-id');
+  s.queueReply(b,'Fix this','stable-request-id');
+  assert.equal(s.claimReplies('host1').length,0);
+  const jobs=s.claimReplies('host2');
+  assert.equal(jobs.length,1);assert.equal(jobs[0].native_id,'same');
+  assert.equal(jobs[0].runtime,'codex');
+  s.replyState(r.id,'sent');
+  assert.equal(s.messages(b).length,1);
+  assert.equal(s.messages(a).length,0);
+  assert.equal(s.messages(c).length,0);
+  assert.equal(s.claimReplies('host2').length,0);
+}));
+test('Instant mode scoped to original session and explicit approval delivery',()=>fixture(s=>{
+  const sid=s.session({runtime:'codex',nativeId:'thread-instant',title:'Important'});
+  const other=s.session({runtime:'dsh',nativeId:'different'});
+  s.instantMode(sid,true);
+  assert.equal(s.sessionById(sid).instant_mode,1);
+  assert.equal(s.sessionById(other).instant_mode,0);
+  const m=s.message({sessionId:sid,externalId:'approval:key123',body:'Authorize tool?',priority:'instant',kind:'approval'});
+  const job=s.queueApproval(m.id,'decline');
+  assert.equal(job.kind,'approval');assert.equal(job.approval_key,'key123');
+  assert.equal(s.inbox().length,0);
+  const claimed=s.claimReplies('local');assert.equal(claimed.length,1);
+  s.replyState(job.id,'sent');assert.equal(s.messages(sid).length,1);
+  s.instantMode(sid,false);assert.equal(s.sessionById(sid).instant_mode,0);
+}));
+test('Event-anchored batching is idle until first arrival and restarts after long inactivity',()=>fixture(async(s,dir)=>{
+  s.updateSettings({intervalMin:20,dndEnabled:false});
+  const notify=new NotificationScheduler(s,{vapidFile:join(dir,'vapid.json')});
+  assert.equal(notify.nextAt,null);
+  const sid=s.session({runtime:'codex',nativeId:'event-window'});
+  s.message({sessionId:sid,body:'First progress',runId:'run-a'});
+  assert.equal(notify.nextAt,null,'Progress must not start a deadline');
+  s.message({sessionId:sid,body:'Second progress',runId:'run-a'});
+  s.completeRun(sid,'run-a');
+  const first=s.pendingBatchAnchor();
+  assert.ok(Math.abs(first-Date.now())<3000);
+  assert.equal(notify.nextAt,first+20*60000);
+  s.message({sessionId:sid,body:'Late intermediate item',runId:'run-b'});
+  assert.equal(notify.nextAt,first+20*60000,'Other unfinished runs do not affect deadline');
+  await notify.tick(first+20*60000-1);
+  assert.equal(s.pendingNotifications().length,1);
+  await notify.tick(first+20*60000);
+  assert.equal(s.pendingNotifications().length,0);
+  assert.equal(notify.nextAt,null,'The idle state does not show a fixed future timer');
+  const later=Date.now()+4*3600000;
+  s.completeRun(sid,'run-b',{at:later});
+  assert.equal(notify.nextAt,later+20*60000);
+  await notify.tick(later+20*60000);
+  assert.equal(s.pendingNotifications().length,0);
+  assert.equal(notify.nextAt,null);
+}));test('Batch only at boundary, DND suppresses, Instant bypasses',()=>fixture(async(s,dir)=>{
+  const notices=[];
+  s.updateSettings({intervalMin:20,dndEnabled:true,dndStart:'00:00',dndEnd:'08:00',timeZone:'Asia/Singapore'});
+  const sender=new NotificationScheduler(s,{broadcast:(type,data)=>notices.push(data),vapidFile:join(dir,'vapid.json')});
+  const sid=s.session({runtime:'dsh',nativeId:'session-a',title:'Task A'});
+  s.message({sessionId:sid,body:'Normal message',runId:'dsh-run'});
+  const anchor=Date.parse('2026-10-21T07:20:00+08:00');
+  s.completeRun(sid,'dsh-run',{at:anchor});
+  assert.equal(sender.nextAt,anchor+20*60000);
+  await sender.tick(Date.parse('2026-10-21T07:40:00+08:00'));
+  assert.equal(notices.length,0);assert.equal(s.pendingNotifications().length,1);
+  await sender.tick(Date.parse('2026-10-21T08:00:00+08:00'));
+  assert.equal(notices.length,1);assert.equal(notices[0].kind,'batch');
+  assert.equal(s.pendingNotifications().length,0);
+  assert.equal(sender.nextAt,null,'No deadline after the pending batch has emptied');
+  const instant=s.message({sessionId:sid,body:'Urgent',priority:'instant'});
+  await sender.instant({...instant,title:'Task A'});
+  assert.equal(notices.length,2);assert.equal(notices[1].kind,'instant');
+  assert.equal(s.lastBatchAt(),Date.parse('2026-10-21T08:00:00+08:00'));
+  sender.reset();
+  assert.equal(sender.nextAt,null);
+}));

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn,spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 export class RpcProcess extends EventEmitter {
@@ -9,9 +9,10 @@ export class RpcProcess extends EventEmitter {
   async start() {
     if(this.child) return;
     const isWindows=process.platform==='win32';
+    const useShell=isWindows&&!/\.exe$/i.test(this.executable);
     // Windows npm scripts are .cmd shims; shell command is fixed and not user-provided.
-    const child=spawn(isWindows?'cmd.exe':this.executable,
-      isWindows?['/d','/s','/c',[this.executable,...this.args].join(' ')]:this.args,
+    const child=spawn(useShell?'cmd.exe':this.executable,
+      useShell?['/d','/s','/c',[this.executable,...this.args].join(' ')]:this.args,
       {cwd:this.options.cwd||process.cwd(),env:this.options.env||process.env,windowsHide:true,stdio:['pipe','pipe','pipe']});
     this.child=child;
     child.stderr.on('data',d=>this.emit('stderr',String(d)));
@@ -50,5 +51,12 @@ export class RpcProcess extends EventEmitter {
   }
   notify(method,params={}) {this.write({jsonrpc:'2.0',method,params});}
   respond(id,result){this.write({jsonrpc:'2.0',id,result});}
-  close(){this.child?.kill();this.child=null;}
+  close(){
+    const child=this.child;this.child=null;
+    // The official npm entry point can itself launch codex.exe. Releasing a
+    // dedicated Windows writer requires closing that entire owned process tree.
+    if(child?.pid&&process.platform==='win32'&&this.options.killTree){
+      spawnSync('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore',timeout:5000});
+    }else child?.kill();
+  }
 }

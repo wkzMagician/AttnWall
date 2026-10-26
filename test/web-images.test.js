@@ -38,13 +38,14 @@ test('Web history jobs require the correct extension host',()=>{
  }finally{s.close();rmSync(dir,{recursive:true,force:true});}
 });
 const chrome=process.env.ATTNWALL_CHROME||(process.platform==='win32'?'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe':'/usr/bin/google-chrome');
-test('ChatGPT synthetic DOM: read two messages and attach image before sending',{skip:!existsSync(chrome)},async()=>{
+for(const url of ['https://chatgpt.com/c/6aae2ee6-a578-83ea-af71-b33479edd9ea','https://chatgpt.com/codex/tasks/6aae2ee6-a578-83ea-af71-b33479edd9ea','https://chat.deepseek.com/a/chat/s/6aae2ee6-a578-83ea-af71-b33479edd9ea'])
+test(url+': synthetic DOM attaches image before sending',{skip:!existsSync(chrome)},async()=>{
  const browser=await chromium.launch({executablePath:chrome,headless:true,args:['--no-sandbox']});
  try{
   const page=await browser.newPage();
   const html='<!doctype html><html><body><main><article data-testid="conversation-turn"><div data-message-author-role="user">Question</div></article><article data-testid="conversation-turn"><div data-message-author-role="assistant"><div class="markdown">Answer</div></div></article><form><textarea id="prompt-textarea" style="width:230px;height:40px"></textarea><input type="file" accept="image/*"><button type="submit" aria-label="Send prompt">Send</button></form></main><script>window.sent=[];document.querySelector("input[type=file]").addEventListener("change",e=>{let x=document.createElement("div");x.dataset.testid="attachment-preview";x.innerText=e.target.files[0]?.name||"";document.querySelector("form").append(x)});document.querySelector("form").addEventListener("submit",e=>{e.preventDefault();window.sent.push({text:document.querySelector("textarea").value,filename:document.querySelector("input[type=file]").files[0]?.name});document.querySelector("textarea").value="";document.querySelector("[data-testid=attachment-preview]")?.remove()})</script></body></html>';
   await page.route('**/*',r=>r.fulfill({status:200,contentType:'text/html',body:html}));
-  await page.goto('https://chatgpt.com/c/6aae2ee6-a578-83ea-af71-b33479edd9ea');
+  await page.goto(url);
   await page.addScriptTag({path:'extensions/browser/dom.js'});
   const result=await page.evaluate(async data=>{
    const d=window.AttnWallBridgeDOM,info=d.identify(location.href);
@@ -52,7 +53,7 @@ test('ChatGPT synthetic DOM: read two messages and attach image before sending',
    const submitted=await d.send(document,info,'Analyze picture',{image:{type:'image/png',data,name:'question.png'}});
    return {history,submitted,sent:window.sent};
   },png);
-  assert.deepEqual(result.history.map(x=>x.role),['user','agent']);
+  if(url.includes('/c/'))assert.deepEqual(result.history.map(x=>x.role),['user','agent']);
   assert.equal(result.submitted.sent,true);
   assert.equal(result.sent[0].filename,'question.png');
   assert.equal(result.sent[0].text,'Analyze picture');

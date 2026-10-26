@@ -1,17 +1,18 @@
-const $=id=>document.getElementById(id);$('extension-version').textContent='网页端连接器 · '+chrome.runtime.getManifest().version;
+const $=id=>document.getElementById(id);$('extension-version').textContent=chrome.runtime.getManifest().version;
 async function refresh(){
   const s=await chrome.storage.local.get(['hub','enabled','bridgeStatus']);
   const status=s.bridgeStatus||{};
-  let title='尚未连接 AttnWall',detail='请按下面 3 步连接';
-  let color='#cf9a5b';
+  let title='未连接',detail='',state='idle';
   if(s.enabled&&s.hub){
-    title=status.error?'连接异常':'已配置 · '+(status.lastRuntime?.replace('-web',' Web')||'等待会话');
-    detail=status.error||((status.lastSyncedAt?'最近同步 '+new Date(status.lastSyncedAt).toLocaleTimeString():'等待打开支持的网页会话')+' · '+s.hub);
-    color=status.error?'#d47c57':'#38ba97';
+    title=status.error?'连接异常':'已配置';
+    detail=status.error||new URL(s.hub).hostname+(status.lastSyncedAt?' · '+new Date(status.lastSyncedAt).toLocaleTimeString(): ' · 等待会话');
+    state=status.error?'error':'connected';
   }
   $('status-title').textContent=title;
   $('status-detail').textContent=detail;
-  $('dot').style.background=color;
+  $('dot').dataset.state=state;
+  $('connection-settings').open=!s.enabled;
+  $('connect').disabled=!$('connection').value.trim();
   $('disconnect').disabled=!s.enabled;
   $('dashboard').disabled=!s.hub;
 }
@@ -25,9 +26,9 @@ async function currentTabStatus(){
     else if(u.hostname==='chatgpt.com'&&/^\/codex\/(?:cloud\/)?tasks\/[a-zA-Z0-9_-]{8,150}/.test(u.pathname))platform='Codex Web 任务';
     else if(u.hostname==='chat.deepseek.com'&&/^\/a\/chat\/s\/[a-zA-Z0-9_-]{8,150}/.test(u.pathname))platform='DeepSeek 会话';
   }catch{}
-  $('tab-title').textContent=platform?'当前标签已支持：'+platform:'当前标签不是受支持的会话页';
-  $('tab-detail').textContent=platform?'保持页面打开；首次历史静默导入。':'需要进入具体聊天/任务页面，主页不会同步。';
-  $('tab-dot').style.background=platform?'#38ba97':'#cf9a5b';
+  $('tab-title').textContent=platform||'当前页不可同步';
+  $('tab-detail').textContent='';
+  $('tab-dot').dataset.state=platform?'connected':'idle';
 }
 void currentTabStatus();
 function validate(raw){
@@ -42,6 +43,7 @@ function validate(raw){
     throw new Error('只允许 HTTPS 或本机 localhost HTTP');
   return {hub:url.origin,browserToken:value.browserToken,origin:url.origin+'/*'};
 }
+$('connection').addEventListener('input',()=>{$('connect').disabled=!$('connection').value.trim();$('feedback').textContent='';});
 $('connect').addEventListener('click',async()=>{
   const b=$('connect');b.disabled=true;$('feedback').textContent='';
   try{
@@ -56,15 +58,15 @@ $('connect').addEventListener('click',async()=>{
       const r=await chrome.runtime.sendMessage({type:'ATTNWALL_CHECK'});
       if(!r?.ok)throw new Error(r?.error||'AttnWall 未响应');
     }catch(e){await chrome.storage.local.set(prev);throw e;}
-    $('connection').value='';$('feedback').textContent='连接成功。现在打开会话网页并保持标签打开。';
-    $('feedback').style.color='#208e72';
+    $('connection').value='';$('feedback').textContent='已连接';
+    $('feedback').dataset.state='success';
     await chrome.storage.local.set({bridgeStatus:{error:'',at:Date.now()}});
-  }catch(e){$('feedback').textContent=e.message;$('feedback').style.color='#bb4949';}
+  }catch(e){$('feedback').textContent=e.message;$('feedback').dataset.state='error';}
   finally{b.disabled=false;await refresh();}
 });
 $('disconnect').addEventListener('click',async()=>{
   await chrome.storage.local.set({enabled:false,key:'',bridgeStatus:{error:'',at:Date.now()}});
-  $('feedback').textContent='已断开；浏览器不会再同步消息。';await refresh();
+  $('feedback').textContent='已断开';$('feedback').dataset.state='success';await refresh();
 });
 $('dashboard').addEventListener('click',async()=>{
   const {hub}=await chrome.storage.local.get('hub');

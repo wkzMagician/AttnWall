@@ -1,9 +1,9 @@
 self.addEventListener('install',()=>self.skipWaiting());
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
 self.addEventListener('push',event=>{
-  let payload={title:'AttnWall',body:'收到 Agent 消息',kind:'batch'};
+  let payload={title:'AttnWall',body:(self.navigator?.language||'').toLowerCase().startsWith('zh')?'收到 Agent 消息':'New agent message',kind:'batch'};
   try{payload={...payload,...event.data.json()};}catch{}
-  const opts={body:payload.body||'',icon:'/icon.svg',badge:'/icon.svg',tag:payload.kind==='batch'?'attnwall-batch':undefined,
+  const opts={body:payload.body||'',icon:'/icons/attnwall-coral-v1-192.png',badge:'/icon.svg',tag:payload.notificationId?'attnwall:'+payload.notificationId:payload.kind==='batch'?'attnwall-batch':undefined,
     data:{url:payload.sessionId?'/?session='+encodeURIComponent(payload.sessionId):'/'}};
   // A numeric icon badge is separate from NotificationOptions.badge (an image).
   // Do not change the badge for diagnostic test pushes or legacy payloads.

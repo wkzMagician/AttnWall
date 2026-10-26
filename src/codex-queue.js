@@ -1,5 +1,6 @@
 import {spawn,spawnSync} from 'node:child_process';
-import {existsSync} from 'node:fs';
+import {existsSync,mkdirSync,writeFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
 import {dirname,isAbsolute,join} from 'node:path';
 
 export function codexQueueCommand(executable=process.env.CODEX_QUEUE_BIN||process.env.CODEX_BIN||'codex'){
@@ -17,10 +18,22 @@ export function codexQueueCommand(executable=process.env.CODEX_QUEUE_BIN||proces
   throw new Error('无法安全调用 Codex queue；请将 CODEX_QUEUE_BIN 设置为 codex.exe 或官方 codex.js 的完整路径');
 }
 
-export async function queueCodexMessage(nativeId,text,{executable,env=process.env,cwd=process.cwd()}={}){
+export async function queueCodexMessage(nativeId,text,{executable,env=process.env,cwd=process.cwd(),image=null}={}){
   const cli=codexQueueCommand(executable);
+  const args=[...cli.args,'queue','--thread',nativeId,'--message',text];
+  let imagePath;
+  if(image){
+    const extension={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[image.type];
+    if(!extension)throw new Error('Unsupported queue image type');
+    const directory=join(cwd,'.data','queued-images');
+    mkdirSync(directory,{recursive:true});
+    imagePath=join(directory,randomUUID()+'.'+extension);
+    writeFileSync(imagePath,Buffer.from(image.data,'base64'),{flag:'wx',mode:0o600});
+    // The desktop owner may consume this path later; keep it until its turn completes.
+    args.push('--image',imagePath);
+  }
   return new Promise((resolve,reject)=>{
-    const child=spawn(cli.command,[...cli.args,'queue','--thread',nativeId,'--message',text],
+    const child=spawn(cli.command,args,
       {cwd,env,windowsHide:true,shell:false,stdio:['ignore','pipe','pipe']});
     let stdout='',stderr='';
     const timer=setTimeout(()=>{
@@ -34,7 +47,7 @@ export async function queueCodexMessage(nativeId,text,{executable,env=process.en
       if(code!==0){reject(new Error('Codex queue 失败：'+(stderr.trim()||'exit '+code).slice(0,500)));return;}
       const receipt=stdout.match(/Queued message ([a-zA-Z0-9-]+) for thread ([a-zA-Z0-9-]+)\./);
       if(!receipt||receipt[2]!==nativeId){reject(new Error('Codex queue 回执不确定；请检查原会话，避免重复重试'));return;}
-      resolve({queued:true,queueId:receipt[1],nativeId:receipt[2]});
+      resolve({queued:true,queueId:receipt[1],nativeId:receipt[2],...(imagePath?{imagePath}:{} )});
     });
   });
 }

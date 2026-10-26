@@ -2,115 +2,79 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#eef8ff"><meta name="description" content="Your attention. Your rules.">
-  <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css"><title>AttnWall — Agent 注意力防火墙</title>
+  <meta name="theme-color" content="#fff8f7"><meta name="description" content="AttnWall 会话与收件箱">
+  <link rel="manifest" href="/manifest.webmanifest?v=coral-1"><link rel="icon" href="/icons/attnwall-coral-v1.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/attnwall-coral-v1-180.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="/icons/attnwall-coral-v1-167.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/icons/attnwall-coral-v1-152.png">
+  <meta name="apple-mobile-web-app-title" content="AttnWall">
+  <link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/workspace.css"><title>AttnWall</title>
 </head>
 <body>
   <section id="login" class="login-page hidden">
     <div class="login-panel">
-      <div class="brand-symbol large">◈</div>
-      <h1>AttnWall</h1><p class="muted">Your attention. Your rules.</p>
-      <form id="login-form">
-        <label for="access-token">访问密钥</label>
-        <input id="access-token" type="password" placeholder="粘贴启动终端显示的 Access key" autocomplete="current-password" required>
-        <button class="primary full" type="submit">进入消息中心 →</button>
-      </form>
-      <p class="subtle">首次使用请在运行 AttnWall 的终端中查看密钥。</p>
-      <p id="login-error" class="error"></p>
+      <div class="brand-symbol large"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v6c0 4-8 8-8 8s-8-4-8-8V7z M8 12l3 3 5-6"/></svg></div><h1>AttnWall</h1>
+      <form id="login-form"><label for="login-language-select">界面语言</label><select id="login-language-select" data-language-select aria-label="界面语言"><option value="zh-CN">简体中文</option><option value="en">English</option></select><label for="access-token">访问密钥</label><input id="access-token" type="password" placeholder="终端中的 Access key" autocomplete="current-password" required><button class="primary full" type="submit">登录</button></form>
+      <p id="login-error" class="error" role="alert"></p>
     </div>
   </section>
   <div id="application" class="application hidden">
     <header class="topbar">
-      <div class="brand"><div class="brand-symbol">◈</div><span>AttnWall</span><small>ATTENTION FIREWALL</small></div>
-      <div class="top-actions">
-        <span class="connection-dot" id="connection-dot"></span><span class="top-status" id="connection-label">正在连接</span>
-        <button class="icon-button" id="notify-button" title="启用设备通知" aria-label="启用通知">♧</button>
-        <button class="icon-button" id="settings-button" title="设置" aria-label="设置">⚙</button>
-      </div>
+      <div class="brand"><div class="brand-symbol"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v6c0 4-8 8-8 8s-8-4-8-8V7z M8 12l3 3 5-6"/></svg></div><span>AttnWall</span></div>
+      <div class="top-actions"><span class="top-status hidden" id="connection-label" role="status"></span><button class="icon-button" id="notify-button" title="启用通知" aria-label="启用通知" aria-pressed="false"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4"/></svg></button><button class="icon-button" id="settings-button" title="设置" aria-label="设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/></svg></button></div>
     </header>
     <div class="workspace">
-      <aside class="sidebar">
-        <div class="section-heading"><span>工作区</span><span class="pill" id="session-count">0</span></div>
-        <button id="inbox-nav" class="navigation active"><span class="nav-icon">▤</span><span>统一收件箱</span><span class="counter" id="unread-count">0</span></button>
-        <div class="section-heading sessions-heading"><span>Agent 会话</span><button id="attach-button" class="small-action" title="添加会话或连接来源" aria-label="添加会话或连接来源">＋</button></div>
-        <label class="session-range-control"><span>活动时间</span><select id="session-range" aria-label="按活动时间筛选 Agent 会话"><option value="1d">最近 24 小时</option><option value="7d" selected>最近一周</option><option value="30d">最近一个月</option><option value="all">全部会话</option></select></label>
-        <input id="session-search" class="session-search" type="search" autocomplete="off" placeholder="搜索所有已发现会话…" aria-label="搜索会话名称或来源">
-        <div id="session-filter-summary" class="session-filter-summary" aria-live="polite"></div>
+      <aside class="sidebar" aria-label="会话导航">
+        <button id="inbox-nav" class="navigation active"><span class="nav-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z M4 14h5l2 3h2l2-3h5"/></svg></span><span>收件箱</span><span class="counter" id="unread-count">0</span></button>
+        <div class="section-heading sessions-heading"><span>会话 <span id="session-filter-summary" class="session-filter-summary" aria-live="polite"></span></span><button id="attach-button" class="small-action" title="添加会话" aria-label="添加会话">＋</button></div>
+        <label class="session-range-control"><select id="session-range" aria-label="会话活动时间"><option value="1d">最近 24 小时</option><option value="7d" selected>最近一周</option><option value="30d">最近一个月</option><option value="all">全部会话</option></select></label>
+        <input id="session-search" class="session-search" type="search" autocomplete="off" placeholder="搜索会话" aria-label="搜索会话">
         <div id="session-list" class="session-list"></div>
-        <div class="sidebar-foot"><span class="indicator"></span>后台持续收集消息</div>
       </aside>
       <main class="content">
         <section id="inbox-view">
-          <div class="page-title"><div><div class="eyebrow">FOCUS WITHOUT INTERRUPTION</div><h1>统一收件箱</h1><p>所有 Agent 消息都在这里，打扰由你决定。</p></div><div class="focus-chip">☾ 专注优先</div></div>
-          <div class="stats-grid">
-            <article class="stat"><span>筛选范围内会话</span><strong id="stat-sessions">0</strong><small id="stat-session-range">最近一周 · Codex + DSH</small></article>
-            <article class="stat"><span>待处理消息</span><strong id="stat-unread">0</strong><small>来自所有会话</small></article>
-            <article class="stat"><span>等待批量投递</span><strong id="stat-queue">0</strong><small>已完成任务等待批量提醒</small></article>
-          </div>
-          <div class="delivery-banner"><div class="clock-symbol">◷</div><div><strong id="delivery-text">正在加载提醒计划</strong><p id="delivery-subtitle">Instant 消息始终优先</p></div><span class="live-pill" id="dnd-tag">通知集中投递</span></div>
-          <div class="list-heading"><h2>需要你关注的消息 <small id="inbox-window" class="muted"></small></h2><button class="text-button" id="mark-all">全部标为已读</button></div>
+          <div class="page-title"><h1>收件箱 <small id="inbox-window" class="muted"></small></h1><button class="text-button hidden" id="mark-all">全部已读</button></div>
+          <div id="delivery-status" class="delivery-status hidden" role="status"><span>待投递 <strong id="stat-queue">0</strong></span><span id="delivery-text"></span></div>
           <div id="inbox-items" class="inbox-items"></div>
         </section>
         <section id="conversation-view" class="hidden">
-          <div class="conversation-header"><button id="back-button" class="icon-button mobile-back">←</button><div class="conversation-title"><div class="eyebrow" id="conversation-runtime">AGENT CONVERSATION</div><h1 id="conversation-name">会话</h1><p id="conversation-path" class="muted"></p></div><div class="conversation-tools"><button class="text-button" id="mark-session-read">标为已读</button></div></div>
-          <div class="history-toolbar"><span id="history-status" class="muted">正在准备会话历史…</span><button type="button" id="history-retry" class="text-button hidden">重新同步</button><button type="button" id="history-older" class="outline hidden">加载更早消息</button></div>
+          <div class="conversation-header"><button id="back-button" aria-label="返回收件箱" class="icon-button mobile-back">←</button><div class="conversation-title"><div class="conversation-source" id="conversation-runtime"></div><h1 id="conversation-name" data-i18n-skip>会话</h1><p id="conversation-path" class="muted" data-i18n-skip></p></div><div class="conversation-tools"><button class="text-button" id="mark-session-read">标为已读</button></div></div>
+          <div class="history-toolbar"><span id="history-status" class="muted" role="status"></span><button type="button" id="history-retry" class="text-button hidden">重试</button><button type="button" id="history-older" class="text-button hidden">更早消息</button></div>
           <div id="conversation-messages" class="conversation-messages"></div>
-          <form id="compose" class="compose"><textarea id="compose-text" rows="2" maxlength="10000" placeholder="回复将自动发送到原始 Agent 会话…"></textarea><div id="compose-attachment-preview" class="compose-attachment-preview hidden"></div><div class="compose-actions"><label id="compose-image-label" class="compose-image-label" for="compose-image"> <span aria-hidden="true">📎</span> 图片<input id="compose-image" type="file" accept="image/png,image/jpeg,image/webp" hidden></label><button id="instant-toggle" class="compose-instant" type="button" aria-pressed="false" aria-label="开启快速模式" title="快速模式：后续 Agent 回复立即提醒">⚡ 快速模式：关</button><span id="reply-hint">消息立即发送；后续通知仍遵循你的提醒间隔。</span><button type="submit" class="primary">发送回复 ↑</button></div></form>
+          <form id="compose" class="compose"><textarea id="compose-text" aria-label="回复消息" rows="2" maxlength="10000" placeholder="回复…"></textarea><div id="compose-attachment-preview" class="compose-attachment-preview hidden"></div><div class="compose-actions"><label id="compose-image-label" class="compose-image-label" for="compose-image"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9 M6 14l8-8"/></svg> 图片<input id="compose-image" type="file" accept="image/png,image/jpeg,image/webp" hidden></label><button id="instant-toggle" class="compose-instant" type="button" aria-pressed="false" aria-label="开启快速模式" title="任务完成后立即通知">快速模式：关</button><button type="submit" class="primary">发送 ↑</button></div></form>
         </section>
         <section id="settings-view" class="hidden">
-          <div class="page-title"><div><div class="eyebrow">YOUR ATTENTION, YOUR RULES</div><h1>通知与连接设置</h1><p>Agent 可以持续工作，而你的注意力由你控制。</p></div></div>
+          <div class="page-title"><h1>设置</h1></div>
           <form id="settings-form" class="settings-form">
-            <div class="setting-card"><div class="setting-heading"><h2>批量消息提醒</h2><p>Agent 本轮完成后才生成通知；普通完成通知按最短间隔集中提醒。</p></div>
-              <div class="field-row"><label for="interval">最短提醒间隔（分钟）</label><input id="interval" type="number" min="1" max="1440" value="20" required></div></div>
-            <div class="setting-card"><div class="setting-heading"><h2>每日免打扰</h2><p>在这个时段内累计普通消息，结束后补发。</p></div>
-              <label class="switch-row"><span>启用免打扰</span><input id="dnd-enabled" type="checkbox"></label>
-              <div class="time-fields"><div><label for="dnd-start">开始</label><input id="dnd-start" type="time"></div><div><label for="dnd-end">结束</label><input id="dnd-end" type="time"></div></div>
-              <div class="field-row"><label for="time-zone">时区</label><input id="time-zone" type="text" placeholder="Asia/Singapore" required></div></div>
-            <div class="setting-card"><div class="setting-heading"><h2>Instant 优先通道</h2><p>Agent 本轮完成后立即通知；执行中的进度消息不会打断你。需要人工批准时仍立即提醒。操作系统专注模式仍可能拦截推送。</p></div>
-              <label class="switch-row"><span>允许 Instant 通知</span><input id="instant-enabled" type="checkbox"></label></div>
-            <div class="settings-actions"><button type="submit" class="primary">保存设置</button><span id="settings-feedback" class="muted"></span></div>
+            <div class="setting-card">
+              <div class="field-row"><label for="language-select">界面语言</label><select id="language-select" data-language-select aria-label="界面语言"><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
+              <div class="field-row"><label for="interval">提醒间隔（分钟）</label><input id="interval" type="number" min="1" max="1440" value="20" required></div>
+              <label class="switch-row"><span>允许即时通知</span><input id="instant-enabled" type="checkbox"></label>
+              <label class="switch-row"><span>免打扰</span><input id="dnd-enabled" type="checkbox" aria-controls="dnd-schedule"></label>
+              <div id="dnd-schedule"><div class="time-fields"><div><label for="dnd-start">开始</label><input id="dnd-start" type="time" required></div><div><label for="dnd-end">结束</label><input id="dnd-end" type="time" required></div></div><div class="field-row"><label for="time-zone">时区</label><input id="time-zone" type="text" required></div></div>
+            </div>
+            <div class="settings-actions"><button type="submit" class="primary">保存</button><span id="settings-feedback" class="muted" role="status"></span></div>
           </form>
-          <div class="setting-card push-diagnostics">
-            <div class="setting-heading"><h2>系统通知诊断</h2><p>查看已订阅设备，并直接向指定设备发送一条测试推送。HTTP 201 表示 Apple 已接受请求，不保证手机实际弹出横幅。</p></div>
-            <div id="push-device-list" class="push-device-list"></div>
-            <p id="push-test-feedback" class="muted" role="status"></p>
-          </div>
-          <div class="setting-card browser-onboarding">
-            <div class="setting-heading"><h2>浏览器网页会话连接</h2><p>支持 ChatGPT（普通聊天与项目内会话）、Codex Web 和 DeepSeek Web。Chrome / Edge 安装独立扩展后，网页消息会进入统一收件箱，手机端回复可转发到对应网页标签。</p></div>
-            <div class="onboarding-step"><span>1</span><div><strong>加载浏览器扩展</strong><p>电脑打开 <code>chrome://extensions</code>（Edge 用 <code>edge://extensions</code>），开启「开发者模式」→「加载已解压的扩展程序」，选择项目的 <code>extensions/browser</code> 文件夹。</p></div></div>
-            <div class="onboarding-step"><span>2</span><div><strong>复制连接配置</strong><p>点击复制，在浏览器工具栏打开「AttnWall Web Bridge」，粘贴并点击连接。</p><button class="primary" type="button" id="copy-browser-config">复制扩展连接配置</button><p id="browser-config-feedback" class="browser-feedback" role="status"></p></div></div>
-            <div class="onboarding-step"><span>3</span><div><strong>打开具体会话并保持标签运行</strong><p><a href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">ChatGPT ↗</a>、<a href="https://chatgpt.com/codex" target="_blank" rel="noopener noreferrer">Codex Web ↗</a> 或 <a href="https://chat.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek Web ↗</a>。进入具体任务或对话，首次抓取的历史会静默导入。</p></div></div>
-            <p class="browser-warning">浏览器标签必须保持打开，网页关闭时无法继续读取或发送。扩展不读取站点 Cookie / API Key。连接配置含专用密钥，请勿公开。网页升级导致输入框变化时，转发可能需要重新适配。</p>
-          </div>
-          <div class="setting-card connection-info"><h2>连接说明</h2><p>本机默认连接器会扫描 Codex 会话。DSH 使用 SDK 接入已知会话 ID，运行时必须已安装。其他电脑可独立启动 Connector 并连接到同一个消息中心。</p><button class="outline" id="logout">退出登录</button></div>
+          <details class="setting-card push-diagnostics"><summary>通知设备</summary><div id="push-device-list" class="push-device-list"></div><p id="push-test-feedback" class="muted" role="status"></p></details>
+          <details class="setting-card browser-onboarding"><summary>连接网页会话</summary>
+            <div class="onboarding-step"><span>1</span><div><strong>安装扩展</strong><p>浏览器扩展 → 开发者模式 → 加载已解压的扩展程序，选择 <code>extensions/browser</code>。</p></div></div>
+            <div class="onboarding-step"><span>2</span><div><button class="outline" type="button" id="copy-browser-config">复制连接配置</button><p>粘贴到 AttnWall Web Bridge。</p><p id="browser-config-feedback" class="browser-feedback" role="status"></p></div></div>
+            <div class="onboarding-step"><span>3</span><div><strong>打开会话</strong><p><a href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">ChatGPT ↗</a> · <a href="https://chatgpt.com/codex" target="_blank" rel="noopener noreferrer">Codex Web ↗</a> · <a href="https://chat.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek ↗</a></p><p>会话标签页需保持打开。</p></div></div>
+          </details>
+          <div class="settings-logout"><button class="text-button" id="logout">退出登录</button></div>
         </section>
       </main>
     </div>
-    <nav class="mobile-nav"><button data-nav="inbox" class="active">▤<span>收件箱</span></button><button data-nav="sessions">▦<span>会话</span></button><button data-nav="settings">⚙<span>设置</span></button></nav>
+    <nav class="mobile-nav" aria-label="主导航"><button data-nav="inbox" class="active"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z M4 14h5l2 3h2l2-3h5"/></svg><span>收件箱</span></button><button data-nav="sessions"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"/></svg><span>会话</span></button><button data-nav="settings"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/></svg><span>设置</span></button></nav>
     <div id="toast" role="status" class="toast hidden"></div>
   </div>
-  <dialog id="add-source-dialog" aria-labelledby="add-source-title">
-    <h2 id="add-source-title">添加 Agent 会话</h2>
-    <p class="muted">选择会话来源。不同平台的连接流程相互独立，不需要为网页会话填写 DSH Session ID。</p>
-    <div class="source-choices">
-      <button type="button" class="source-choice" data-add-source="codex">
-        <span class="source-choice-symbol">CX</span><span><strong>Codex CLI</strong><small>自动发现本机 Codex 会话；无需手动添加</small></span><span aria-hidden="true">›</span>
-      </button>
-      <button type="button" class="source-choice" data-add-source="dsh">
-        <span class="source-choice-symbol dsh">DS</span><span><strong>DeepSeek Harness</strong><small>创建新 DSH 会话或附加已有 Session ID</small></span><span aria-hidden="true">›</span>
-      </button>
-      <button type="button" class="source-choice" data-add-source="web">
-        <span class="source-choice-symbol web">WEB</span><span><strong>AI 网页会话</strong><small>通过浏览器扩展连接 ChatGPT / Codex Web / DeepSeek</small></span><span aria-hidden="true">›</span>
-      </button>
-    </div>
-    <div class="dialog-buttons"><button class="outline" type="button" id="add-source-cancel">取消</button></div>
-  </dialog>
-  <dialog id="attach-dialog"><form id="attach-form"><h2>DeepSeek Harness · DSH</h2><p class="muted">已有会话请填写原始 ID；不填写则创建新的持久会话。</p>
-      <label for="new-dsh-host">Connector 主机名</label><input id="new-dsh-host" value="local" required>
-      <label for="new-dsh-id">原始 Session ID（可选）</label><input id="new-dsh-id" placeholder="留空创建新会话">
-      <label for="new-dsh-title">显示名称</label><input id="new-dsh-title" placeholder="DSH Task">
-      <div class="dialog-buttons"><button class="outline" type="button" id="attach-cancel">取消</button><button class="primary" type="submit">连接</button></div></form></dialog>
+  <dialog id="add-source-dialog" aria-labelledby="add-source-title"><h2 id="add-source-title">添加会话</h2><div class="source-choices">
+    <button type="button" class="source-choice" data-add-source="codex"><span class="source-choice-symbol"><img class="runtime-logo" src="/icons/codex.svg" alt="" width="22" height="22"></span><span><strong>Codex</strong><small>新建会话</small></span><span aria-hidden="true">›</span></button>
+    <button type="button" class="source-choice" data-add-source="dsh"><span class="source-choice-symbol"><img class="runtime-logo" src="/icons/deepseek.svg" alt="" width="22" height="22"></span><span><strong>DeepSeek DSH</strong><small>创建或连接 Session ID</small></span><span aria-hidden="true">›</span></button>
+    <button type="button" class="source-choice" data-add-source="web"><span class="source-choice-symbol"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"/></svg></span><span><strong>网页会话</strong><small>ChatGPT / Codex / DeepSeek</small></span><span aria-hidden="true">›</span></button>
+  </div><div class="dialog-buttons"><button class="outline" type="button" id="add-source-cancel">取消</button></div></dialog>
+  <dialog id="codex-create-dialog" aria-labelledby="codex-create-title"><form id="codex-create-form"><h2 id="codex-create-title">新建 Codex 会话</h2><label for="codex-create-name">名称</label><input id="codex-create-name" value="新会话" data-i18n-value="新会话" maxlength="160" required><label for="codex-create-host">Connector 主机</label><input id="codex-create-host" value="local" maxlength="60" pattern="[a-zA-Z0-9._-]{1,60}" required><label for="codex-create-cwd">工作目录（可选）</label><input id="codex-create-cwd" maxlength="2048"><p id="codex-create-status" class="muted" role="status"></p><div class="dialog-buttons"><button id="codex-create-cancel" class="outline" type="button">取消</button><button class="primary" type="submit">创建</button></div></form></dialog>
+  <dialog id="attach-dialog" aria-labelledby="attach-title"><form id="attach-form"><h2 id="attach-title">DeepSeek DSH</h2><label for="new-dsh-host">Connector 主机</label><input id="new-dsh-host" value="local" required maxlength="60"><label for="new-dsh-id">Session ID（留空新建）</label><input id="new-dsh-id" maxlength="250"><label for="new-dsh-title">名称</label><input id="new-dsh-title" placeholder="DSH 会话" maxlength="160"><div class="dialog-buttons"><button id="attach-cancel" class="outline" type="button">取消</button><button class="primary" type="submit">连接</button></div></form></dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

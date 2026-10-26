@@ -1,0 +1,7 @@
+Brand SVGs from @lobehub/icons-static-svg 1.98.0 (Lobe Icons).
+Source: https://github.com/lobehub/lobe-icons
+License: MIT, reproduced in LICENSE. Brand marks belong to their respective owners.
+
+codex.svg: icons/codex-color.svg
+chatgpt.svg: icons/openai.svg
+deepseek.svg: icons/deepseek-color.svg

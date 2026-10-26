@@ -55,7 +55,9 @@ async function sync(request,sender){
   }));
   const response=await api('POST','/api/browser/sync',{host:s.host,captureVersion:2,
     sessions:[{...actual,title:(request.session?.title||sender.tab.title||actual.runtime).slice(0,150)},...sidebar],
-    messages,completions:(Array.isArray(request.completions)?request.completions:[]).filter(c=>
+    messages,starts:(Array.isArray(request.starts)?request.starts:[]).filter(r=>
+      r.runtime===actual.runtime&&r.nativeId===actual.nativeId&&typeof r.runId==='string'&&r.runId.startsWith('web:dom-')).slice(0,5).map(r=>({...actual,runId:r.runId,at:r.at,title:request.session?.title||actual.nativeId})),
+    completions:(Array.isArray(request.completions)?request.completions:[]).filter(c=>
       c.runtime===actual.runtime&&c.nativeId===actual.nativeId&&
       typeof c.runId==='string'&&c.runId.startsWith('web:dom-')).slice(0,5)});
   tracked.set(sender.tab.id,{...actual,tabId:sender.tab.id,lastSeen:Date.now()});

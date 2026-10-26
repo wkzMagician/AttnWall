@@ -12,6 +12,7 @@ async function withPage(html,run){
     await page.route('https://chatgpt.com/**',r=>r.fulfill({contentType:'text/html',body:html}));
     await page.goto(url);
     await page.addScriptTag({path:'extensions/browser/dom.js'});
+    await page.addScriptTag({path:'extensions/browser/i18n.js'});
     await run(page);
   }finally{await browser.close();}
 }

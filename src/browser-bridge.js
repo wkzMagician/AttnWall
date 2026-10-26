@@ -66,6 +66,11 @@ export async function handleBrowserBridge(req,res,url,{store,secrets,notify,broa
         store.session({host:data.host,runtime:s.runtime,nativeId:s.nativeId,
           title:String(s.title||'Web conversation').slice(0,150),status:'idle',sourceUrl:s.url});
       }
+      for(const r of (Array.isArray(data.starts)?data.starts:[]).slice(0,10)){
+        if(!providerSession(r.runtime,r.url,r.nativeId)||typeof r.runId!=='string'||!r.runId.startsWith('web:dom-')||r.runId.length>180)continue;
+        const id=store.session({host:data.host,runtime:r.runtime,nativeId:r.nativeId,title:r.title||r.nativeId,status:'active',sourceUrl:r.url});
+        store.startRun(id,r.runId,{at:Number.isFinite(r.at)&&r.at>0&&r.at<=Date.now()+300000?r.at:Date.now()});
+      }
       for(const m of (Array.isArray(data.messages)?data.messages:[]).slice(0,60)){
         if(!providerSession(m.runtime,m.url,m.nativeId))continue;
         if(!['agent','user'].includes(m.role)||typeof m.body!=='string'||!m.body.trim()||m.body.length>20000)continue;
@@ -84,10 +89,10 @@ export async function handleBrowserBridge(req,res,url,{store,secrets,notify,broa
         if(!providerSession(c.runtime,c.url,c.nativeId)||typeof c.runId!=='string'||!c.runId.startsWith('web:dom-'))continue;
         const sessionId=data.host+':'+c.runtime+':'+c.nativeId;
         if(!store.sessionById(sessionId))continue;
-        const last=store.completeRun(sessionId,c.runId,{status:'completed'});
+        const last=store.completeRun(sessionId,c.runId,{status:'completed',at:Number.isFinite(c.at)&&c.at>0&&c.at<=Date.now()+300000?c.at:Date.now()});
         if(last?.priority==='instant')void notify.instant({...last,title:store.sessionById(sessionId).title}).catch(console.error);
       }
-      if(added||data.sessions?.length||data.completions?.length)broadcast('update',{kind:'browserSync',added});
+      if(added||data.starts?.length||data.sessions?.length||data.completions?.length)broadcast('update',{kind:'browserSync',added});
       respond(res,200,{ok:true,added},origin);return;
     }
     if(path==='/api/browser/jobs'&&req.method==='GET'){

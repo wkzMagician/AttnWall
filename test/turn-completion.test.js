@@ -12,9 +12,12 @@ function fixture(fn){
  try{return fn(store);}finally{store.close();rmSync(dir,{recursive:true,force:true});}
 }
 test('Codex and DSH emit exactly one completion per run, not per message',()=>{
- const codexMessages=[],codexComplete=[];
- const codex=new CodexAdapter(m=>codexMessages.push(m),()=>{},c=>codexComplete.push(c));
+ const codexMessages=[],codexComplete=[],codexStarts=[];
+ const codex=new CodexAdapter(m=>codexMessages.push(m),()=>{},c=>codexComplete.push(c),r=>codexStarts.push(r));
  codex.rpc.emit('notification','turn/started',{threadId:'thread1',turn:{id:'turn-1'}});
+ assert.equal(codexStarts.length,1);
+ assert.equal(codexStarts[0].runId,'turn-1');
+ assert.ok(Math.abs(codexStarts[0].at-Date.now())<1000);
  codex.rpc.emit('notification','item/completed',{threadId:'thread1',turnId:'turn-1',item:{type:'agentMessage',id:'a1',text:'First progress'}});
  codex.rpc.emit('notification','item/completed',{threadId:'thread1',turnId:'turn-1',item:{type:'agentMessage',id:'a2',text:'Final result'}});
  assert.equal(codexComplete.length,0);
@@ -23,9 +26,11 @@ test('Codex and DSH emit exactly one completion per run, not per message',()=>{
  codex.rpc.emit('notification','turn/completed',{threadId:'thread1',turn:{id:'turn-1',status:'completed'}});
  assert.equal(codexComplete.length,1);
  assert.equal(codexComplete[0].runId,'turn-1');
- const dshMessages=[],dshComplete=[];
- const dsh=new DshAdapter(m=>dshMessages.push(m),()=>{},c=>dshComplete.push(c));
+ const dshMessages=[],dshComplete=[],dshStarts=[];
+ const dsh=new DshAdapter(m=>dshMessages.push(m),()=>{},c=>dshComplete.push(c),r=>dshStarts.push(r));
  dsh.rpc.emit('notification','session.event',{sessionId:'sdk-session',event:{type:'turn/start',seq:20}});
+ assert.equal(dshStarts.length,1);
+ assert.equal(dshStarts[0].runId,'dsh:20');
  dsh.rpc.emit('notification','session.event',{sessionId:'sdk-session',event:{type:'assistant/message',seq:21,data:{message:{content:[{type:'text',text:'Progress one'}]}}}});
  dsh.rpc.emit('notification','session.event',{sessionId:'sdk-session',event:{type:'assistant/message',seq:22,data:{message:{content:[{type:'text',text:'Progress two'}]}}}});
  assert.equal(dshComplete.length,0);
@@ -48,14 +53,19 @@ test('Unfinished messages invisible; one queued completion per run, idempotent, 
  assert.equal(store.completeRun(sid,'t-1'),null);
  assert.equal(store.pendingNotifications().length,1);
  store.claimNotificationBatch(Date.now());
- assert.equal(store.readyInbox().length,3,'All final run messages appear together once released');
+ assert.equal(store.readyInbox().length,1,'Only the final output counts as an inbox message');
+ assert.equal(store.readyInbox()[0].body,'Step 3');
+ assert.equal(store.readyUnreadCount(),1);
+ assert.equal(store.readyUnreadCount(sid),1);
+ assert.equal(store.readySessions()[0].unread,1);
+ assert.equal(store.messages(sid).length,3,'Progress remains available in conversation history');
  store.instantMode(sid,true);
  store.message({sessionId:sid,runId:'t-2',body:'Still working',priority:'instant'});
- assert.equal(store.readyInbox().length,3);
+ assert.equal(store.readyInbox().length,1);
  const instant=store.completeRun(sid,'t-2');
  assert.equal(instant.body,'Still working');
  assert.equal(store.pendingNotifications().length,0);
- assert.equal(store.readyInbox().length,4,'Instant releases only after completion');
+ assert.equal(store.readyInbox().length,2,'Instant releases only after completion');
 }));
 const chrome=process.env.ATTNWALL_CHROME||(process.platform==='win32'?'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe':'/usr/bin/google-chrome');
 test('Web completion needs witnessed running -> finished; idle progress never notifies',{skip:!existsSync(chrome),timeout:30000},async()=>{

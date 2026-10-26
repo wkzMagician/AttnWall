@@ -136,6 +136,14 @@ const server=http.createServer(async(req,res)=>{
       const id=store.session({runtime:'dsh',host,nativeId:p.nativeId,title:p.title||'DSH · '+p.nativeId});
       broadcast('update',{kind:'session'});return reply(res,200,{id});
     }
+    if(u.pathname==='/api/sessions/new-codex'&&req.method==='POST'){
+      const request=store.requestCodexSession(await body(req));
+      return reply(res,202,{request});
+    }
+    if(u.pathname==='/api/sessions/creation'&&req.method==='GET'){
+      const request=store.creationStatus(u.searchParams.get('id'));
+      return request?reply(res,200,{request}):fail(res,404,'Unknown creation request');
+    }
     if(u.pathname==='/api/sessions/new-dsh'&&req.method==='POST'){
       const p=await body(req),host=typeof p.host==='string'&&/^[a-zA-Z0-9._-]{1,60}$/.test(p.host)?p.host:'local';
       const id=store.session({runtime:'dsh',host,nativeId:'attnwall-'+randomUUID(),title:p.title||'New DSH session'});
@@ -163,6 +171,12 @@ const server=http.createServer(async(req,res)=>{
         if(!s.nativeId||!['codex','dsh'].includes(s.runtime))continue;
         store.session({host,...s});
       }
+      for(const r of (Array.isArray(p.starts)?p.starts:[]).slice(0,80)){
+        if(!r.nativeId||!['codex','dsh'].includes(r.runtime)||typeof r.runId!=='string'||!r.runId.trim()||r.runId.length>180)continue;
+        const previous=store.sessionById(host+':'+r.runtime+':'+r.nativeId);
+        const id=store.session({host,runtime:r.runtime,nativeId:r.nativeId,title:previous?.title||r.nativeId,status:previous?.status||'active'});
+        store.startRun(id,r.runId,{at:Number.isFinite(r.at)&&r.at>0&&r.at<=Date.now()+300000?r.at:Date.now()});
+      }
       for(const m of (Array.isArray(p.messages)?p.messages:[]).slice(0,200)){
         if(!m.nativeId||!['codex','dsh'].includes(m.runtime))continue;
         const previous=store.sessionById(host+':'+m.runtime+':'+m.nativeId);
@@ -179,7 +193,7 @@ const server=http.createServer(async(req,res)=>{
         if(!['codex','dsh'].includes(completion.runtime)||typeof completion.runId!=='string')continue;
         const sessionId=host+':'+completion.runtime+':'+completion.nativeId;
         if(!store.sessionById(sessionId))continue;
-        const final=store.completeRun(sessionId,completion.runId,{status:completion.status||'completed'});
+        const final=store.completeRun(sessionId,completion.runId,{status:completion.status||'completed',at:Number.isFinite(completion.at)&&completion.at>0&&completion.at<=Date.now()+300000?completion.at:Date.now()});
         if(final?.priority==='instant')void notify.instant({...final,title:store.sessionById(sessionId).title}).catch(console.error);
       }
       for(const h of (Array.isArray(p.historyComplete)?p.historyComplete:[]).slice(0,20)){
@@ -187,8 +201,14 @@ const server=http.createServer(async(req,res)=>{
         if(!session||session.host!==host||session.runtime!=='codex')continue;
         store.completeHistory(h.sessionId,typeof h.error==='string'?h.error.slice(0,500):null);
       }
-      if(added||p.sessions?.length||p.historyComplete?.length||p.completions?.length)broadcast('update',{kind:'sync',added});
+      for(const result of (Array.isArray(p.creations)?p.creations:[]).slice(0,5))store.finishSessionCreation(host,result);
+      if(added||p.starts?.length||p.sessions?.length||p.historyComplete?.length||p.completions?.length||p.creations?.length)broadcast('update',{kind:'sync',added});
       return reply(res,200,{ok:true,added});
+    }
+    if(u.pathname==='/api/connector/attachment'&&req.method==='GET'){
+      const host=u.searchParams.get('host'),id=u.searchParams.get('id');
+      if(!id||!host||!/^[a-zA-Z0-9._-]{1,60}$/.test(host))return fail(res,400,'Invalid image request');
+      return reply(res,200,{image:store.replyImage(id,host)});
     }
     if(u.pathname==='/api/connector/jobs'&&req.method==='GET'){
       const host=u.searchParams.get('host');
@@ -196,7 +216,8 @@ const server=http.createServer(async(req,res)=>{
       const jobs=store.claimReplies(host);
       const historyRequests=u.searchParams.get('history')==='0'?[]:store.claimHistory(host);
       const dsh=store.sessions().filter(s=>s.host===host&&s.runtime==='dsh').map(x=>x.native_id);
-      return reply(res,200,{jobs,dsh,historyRequests});
+      const createRequests=u.searchParams.get('create')==='0'?[]:store.claimSessionCreations(host);
+      return reply(res,200,{jobs,dsh,historyRequests,createRequests});
     }
     if(u.pathname==='/api/connector/ack'&&req.method==='POST'){
       const p=await body(req);

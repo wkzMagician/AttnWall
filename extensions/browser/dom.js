@@ -27,10 +27,36 @@
     return r.width>3 && r.height>3 && style?.display!=='none'&&style?.visibility!=='hidden';
   }
   function compact(text){return String(text||'').replace(/\u00a0/g,' ').replace(/\n{3,}/g,'\n\n').trim();}
+  function normalizeDraft(text){return compact(String(text||'').replace(/\r\n?/g,'\n'));}
+  function draftText(editor){
+    if(!editor)return '';
+    if(typeof editor.value==='string')return normalizeDraft(editor.value);
+    // innerText inserts visual paragraph spacing; read logical editor lines instead.
+    const read=node=>{
+      if(node.nodeType===3)return node.textContent;
+      if(node.nodeName==='BR')return '\n';
+      let text='';
+      for(const child of node.childNodes){
+        const block=/^(P|DIV|LI)$/.test(child.nodeName);
+        if(block&&text&&!text.endsWith('\n'))text+='\n';
+        const fragment=read(child);
+        text+=block&&fragment==='\n'?'':fragment;
+        if(block)text+='\n';
+      }
+      return text;
+    };
+    return normalizeDraft(read(editor));
+  }
   function checksum(str){
     let h=2166136261;
     for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}
     return (h>>>0).toString(36);
+  }
+  function currentChatgptTurn(el,provider){
+    const turn=el.closest('[data-talvt-turn-state],[data-content-search-turn-key]');
+    if(!turn)return false;
+    const ids=[...turn.querySelectorAll('[data-chatgpt-selection-conversation-id]')].map(node=>node.getAttribute('data-chatgpt-selection-conversation-id'));
+    return !ids.length||ids.every(id=>id===provider.nativeId);
   }
   function candidates(doc,provider){
     const deepseek=provider.runtime==='deepseek-web';
@@ -45,7 +71,8 @@
     ]:chatgpt?[
       '[data-message-author-role]','[data-role="user"]','[data-role="assistant"]',
       '[data-testid="conversation-turn"]','[data-testid="user-message"]',
-      '[data-testid="assistant-message"]'
+      '[data-testid="assistant-message"]',
+      '[data-user-message-bubble]','[data-markdown-text-style="assistant-message"]'
     ]:[
       '[data-message-author-role]','[data-role="user"]','[data-role="assistant"]',
       '[data-testid="message"]','[data-testid*="user-message"]','[data-testid*="assistant-message"]',
@@ -58,7 +85,14 @@
       const original=nodes[i];
       const el=chatgpt?(original.closest('[data-message-author-role]')||original.closest('[data-testid="conversation-turn"]')||original):original;
       if(seen.has(el))continue;
-      if(el.closest('aside,nav,[role="navigation"],[role="dialog"],[aria-hidden="true"],[inert], [data-chatgpt-search-unit-key]'))continue;
+      if(el.closest('aside,nav,[role="navigation"],[role="dialog"],[aria-hidden="true"],[inert]'))continue;
+      if(chatgpt){
+        const modern=el.matches('[data-user-message-bubble],[data-markdown-text-style="assistant-message"]');
+        if(modern&&!currentChatgptTurn(el,provider))continue;
+        if(el.closest('[data-chatgpt-search-unit-key]')&&!currentChatgptTurn(el,provider))continue;
+        const conversation=el.closest('[data-chatgpt-selection-conversation-id]')?.getAttribute('data-chatgpt-selection-conversation-id');
+        if(conversation&&conversation!==provider.nativeId)continue;
+      }
       if(results.some(parent=>parent.contains(el)||el.contains(parent)))continue;
       if(!visible(el))continue;
       seen.add(el);positions.set(el,i);results.push(el);
@@ -66,6 +100,8 @@
     return results.reverse();
   }
   function findRole(el){
+    if(el.hasAttribute('data-user-message-bubble'))return 'user';
+    if(el.getAttribute('data-markdown-text-style')==='assistant-message')return 'agent';
     const role=(el.getAttribute('data-message-author-role')||el.getAttribute('data-role')||el.querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role')||
       (el.querySelector('[data-testid="user-message"]')?'user':'')||
       (el.querySelector('[data-markdown-text-style="assistant-message"], [data-testid="assistant-message"]')?'assistant':'')||'').toLowerCase();
@@ -100,9 +136,13 @@
       const body=compact(scope.innerText||scope.textContent);
       if(!body||body.length>20000)continue;
       const index=ordinal++;
-      const stable=node.getAttribute('data-message-id')||node.getAttribute('data-chatgpt-search-message-ids')||'';
+      const stable=node.getAttribute('data-message-id')||node.getAttribute('data-chatgpt-search-message-ids')||
+        node.closest('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id')||
+        node.querySelector('[data-dil-message-id]')?.getAttribute('data-dil-message-id')||
+        node.closest('[data-chatgpt-search-message-ids]')?.getAttribute('data-chatgpt-search-message-ids')||'';
       const suffix=stable?checksum(stable):String(positions.get(node)??index);
-      results.push({role,body,externalId:'dom-'+suffix+'-'+checksum(role+'\u0000'+body)});
+      const completed=role==='agent'&&chatgpt&&node.closest('[data-talvt-turn-state]')?.getAttribute('data-talvt-turn-state')==='complete';
+      results.push({role,body,externalId:'dom-'+suffix+'-'+checksum(role+'\u0000'+body),completed});
     }
     return results;
   }
@@ -248,10 +288,10 @@
     const route=identify(doc.location.href);
     if(route?.runtime!==provider.runtime||route.nativeId!==provider.nativeId)throw new Error('原网页会话已切换，尚未发送');
     if(isGenerating(doc,provider))throw new Error('原网页正在生成回复；请在结束后再发送');
-    const want=compact(text);
+    const want=normalizeDraft(text);
     let editor=composer(doc);
     if(!editor)throw new Error('找不到原网页的可编辑输入框，请确认页面已加载');
-    const content=el=>compact(el?.value??el?.innerText);
+    const content=draftText;
     const first=content(editor);
     // An earlier uncertain submission may have left the exact same draft visible.
     // Resuming that exact draft is safe; overwriting a different user draft is not.
@@ -303,7 +343,7 @@
       await new Promise(r=>setTimeout(r,130));
     }
     if(!button)throw new Error('已填入原网页草稿，但未找到唯一可点击的发送按钮；请到原网页手动发送');
-    const echoed=()=>extract(doc,provider,{limit:Infinity}).filter(m=>m.role==='user'&&compact(m.body)===want).length;
+    const echoed=()=>extract(doc,provider,{limit:Infinity}).filter(m=>m.role==='user'&&normalizeDraft(m.body)===want).length;
     const before=want?echoed():0;
     button.click();
     for(let i=0;i<20;i++){

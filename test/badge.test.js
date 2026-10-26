@@ -80,3 +80,12 @@ test('Badge unsupported or rejected does not suppress Web Push notification',asy
   await denied.push({title:'Important',unreadCount:3});
   assert.equal(denied.calls.length,1);
 });
+
+test('Retries reuse a system notification tag while distinct events remain separate',async()=>{
+  const worker=mockWorker();
+  await worker.push({kind:'instant',notificationId:'event-1',title:'Original'});
+  await worker.push({kind:'instant',notificationId:'event-1',title:'Retry'});
+  await worker.push({kind:'instant',notificationId:'event-2',title:'Next'});
+  assert.equal(worker.calls[0][2].tag,worker.calls[1][2].tag);
+  assert.notEqual(worker.calls[1][2].tag,worker.calls[2][2].tag);
+});

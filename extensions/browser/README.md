@@ -1,5 +1,17 @@
 # AttnWall Web Bridge · Browser Extension
 
+Version 0.3.12 reports task starts while the page is still generating, preserving the original observation time through sync retries. Ordinary inbox release uses the earliest outstanding task start plus the configured interval, waits for a completed reply, and leaves tasks completed after the batch cutoff for the next batch. Each later batch waits at least T from the previous actual notification; tasks started after an idle gap begin a fresh interval. Reload the extension and refresh the original conversation tabs.
+
+Version 0.3.11 fixes false draft conflicts caused by Windows line endings and rich-text paragraph spacing. The same multiline draft can be submitted once; a genuinely different draft is still preserved. Reload the extension in `chrome://extensions` (or `edge://extensions`) and refresh the original conversation tabs.
+
+Version 0.3.10 recognizes explicitly completed new ChatGPT turns even when generation finishes between observations. Existing history remains silent, and idle intermediate text still does not signal completion. Reload the extension at `chrome://extensions` (or `edge://extensions`) and refresh conversation tabs after updating.
+
+Version 0.3.9 applies the Soft Coral theme to the popup and toolbar icon, with compact status rows and a collapsible connection form. No permissions were added.
+
+Version 0.3.8 supports current ChatGPT user-bubble and assistant-markdown containers, scoped to the active conversation ID. Legitimate conversation messages carrying search-unit metadata are no longer mistaken for search results. Reload the extension and refresh existing ChatGPT tabs after updating.
+
+Version 0.3.7 records generation transitions immediately, including replies that finish between polls and runs already in progress when the tab loads. Idle history stays silent. After updating, reload the extension and refresh provider conversation tabs.
+
 Standalone Chrome / Edge **Manifest V3** extension under `extensions/browser`. Supports **only** these page types:
 
 | Platform | Browser page | Adapter |
@@ -48,7 +60,7 @@ Reload the extension and refresh ChatGPT tabs after updating. Collection starts 
 
 - Opening a discovered web session in AttnWall now queues a **history sync request** to the desktop browser extension. The extension opens the exact previously discovered URL if needed, reads only rendered conversation messages, imports them silently, and reports success or an actionable error. Messages that the original site does not render (virtualized, removed or closed) are not accessible.
 - Rich-text delivery now reacquires React-replaced editors instead of assuming the same DOM node persists. An already prepared **identical** draft can be submitted; unrelated drafts are never overwritten. The original website's accepted submission is still not guaranteed by a DOM-only adapter.
-- The AttnWall phone composer can select a PNG, JPEG or WebP image (maximum 3MB) for a web conversation. The image is stored on the self-hosted hub only for the pending reply. The extension attempts to use the original website's file input and requires visible attachment confirmation before pressing Send. A completed reply deletes the attachment bytes; a failed reply retains them for manual retry. Other file types, multiple images and native Codex/DSH image delivery remain unsupported.
+- The AttnWall phone composer can select a PNG, JPEG or WebP image (maximum 3MB) for any supported conversation. The image is stored on the self-hosted hub only for the pending reply. The extension attempts to use the original website's file input and requires visible attachment confirmation before pressing Send. A completed reply deletes the attachment bytes; a failed reply retains them for manual retry. Native Codex/DSH image delivery uses the independent connector adapters. Other file types and multiple images remain unsupported.
 - **Important:** after updating the files, open `chrome://extensions` and press the reload icon on the locally installed AttnWall Web Bridge extension, then refresh your ChatGPT/DeepSeek tabs. A new backend cannot automatically reload content scripts already running in Chrome.
 - Live ChatGPT/DeepSeek DOM compatibility varies by website release. Simulated browser tests do not establish that your currently logged-in website accepted an image. Verify with a small test; the bridge fails closed when it cannot confirm the upload instead of silently marking it sent.
 

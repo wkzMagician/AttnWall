@@ -54,6 +54,8 @@ test('Actual unpacked MV3 extension: web DOM -> hub -> reply', {skip:!enabled,ti
     }
     assert.equal(baselineReady,true,'Initial historical DOM sync fully completed');
     assert.equal((await getState()).unreadCount,0,'First visible history silent');
+    assert.equal((await getState()).nextBatchAt,null,'Historical messages must not start a timer');
+    const startedAt=Date.now();
     await page.evaluate(()=>{
       const form=document.querySelector('form'),main=document.querySelector('main');
       const user=document.createElement('div');user.className='fbb737a4';user.textContent='A new turn';main.insertBefore(user,form);
@@ -62,6 +64,9 @@ test('Actual unpacked MV3 extension: web DOM -> hub -> reply', {skip:!enabled,ti
     // The collector must witness the generation signal, rather than infer a
     // completed run merely from the presence of an idle assistant message.
     await wait(4200);
+    const firstDeadline=(await getState()).nextBatchAt;
+    assert.ok(firstDeadline>=startedAt+20*60000&&firstDeadline<=Date.now()+20*60000,'Streaming task starts the timer before completion');
+    assert.equal((await getState()).queuedNormal,0,'An active task has no completed output to release');
     await page.evaluate(()=>{
       document.querySelector('[data-testid="stop-button"]').remove();
       const el=document.createElement('div');el.className='ds-markdown';el.textContent='New assistant response';document.querySelector('main').insertBefore(el,document.querySelector('form'));
@@ -74,6 +79,7 @@ test('Actual unpacked MV3 extension: web DOM -> hub -> reply', {skip:!enabled,ti
       console.log('E2E debug',JSON.stringify({status:status.bridgeStatus,queued:current.queuedNormal,sessions:current.sessions.length}));
     }
     assert.equal(got,true,'New web assistant message enters delayed notification queue');
+    assert.equal((await getState()).nextBatchAt,firstDeadline,'Finishing must preserve the start-based deadline');
     const r=await fetch(hub+'/api/replies',{method:'POST',headers:{Authorization:'Bearer '+secrets.accessToken,'Content-Type':'application/json'},body:JSON.stringify({sessionId:matched.id,text:'Follow up via AttnWall'})});
     assert.equal(r.status,200);
     await page.waitForFunction(()=>window.sent==='Follow up via AttnWall',{timeout:16000});

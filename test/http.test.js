@@ -32,6 +32,10 @@ test('HTTP login, cross-host session sync, durable reply pickup, and read sync',
     const first=await bridge('POST','/api/connector/sync',{host:'laptop',sessions:[{runtime:'codex',nativeId:'real-thread-1',title:'Smoke test'}],
       messages:[{runtime:'codex',nativeId:'real-thread-1',externalId:'msg-1',body:'Task done',runId:'codex-turn-1'}]});
     assert.equal(first.status,200);
+    const startedAt=Date.now()-10*60000;
+    const start=await bridge('POST','/api/connector/sync',{host:'laptop',starts:[{runtime:'codex',nativeId:'real-thread-1',runId:'codex-turn-1',at:startedAt}]});
+    assert.equal(start.status,200);
+    assert.equal((await (await ui('GET','/api/state')).json()).nextBatchAt,startedAt+20*60000);
     const dupe=await bridge('POST','/api/connector/sync',{host:'laptop',messages:[{runtime:'codex',nativeId:'real-thread-1',externalId:'msg-1',body:'Task done'}]});
     assert.equal((await dupe.json()).added,0);
     const state=await (await ui('GET','/api/state')).json();

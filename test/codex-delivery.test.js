@@ -9,6 +9,7 @@ import {queueCodexMessage} from '../src/codex-queue.js';
 test('Codex Desktop writer conflict uses the official queue for the exact original thread',async()=>{
   const messages=[],completions=[],sessions=[],calls=[],queued=[];
   const a=new CodexAdapter(m=>messages.push(m),s=>sessions.push(s),c=>completions.push(c));a.ready=true;
+  a.openWriter=async()=>a.rpc;
   const old={id:'old-turn',status:'completed',items:[{type:'userMessage',id:'old-user',content:[{type:'text',text:'Repeat'}]},{type:'agentMessage',id:'old-agent',text:'Old answer'}]};
   let turns=[old];
   a.readRecent=async()=>({id:'original-thread',turns});
@@ -35,6 +36,7 @@ test('Codex Desktop writer conflict uses the official queue for the exact origin
 
 test('Unrelated Codex resume failures never queue or resend the prompt',async()=>{
   const a=new CodexAdapter();a.ready=true;let queues=0;
+  a.openWriter=async()=>a.rpc;
   a.rpc.request=async()=>{throw new Error('Authentication failed');};
   a.queuePrompt=async()=>{queues++;};
   await assert.rejects(a.send('original-thread','Message'),/Authentication failed/);

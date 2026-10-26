@@ -1,15 +1,14 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AttnWall 网页连接器</title><link rel="stylesheet" href="popup.css"></head><body>
-<header><div class="mark">◈</div><div><strong>AttnWall</strong><small id="extension-version">网页端连接器</small></div></header>
-<section class="status"><span id="dot"></span><div><strong id="status-title">检查连接中…</strong><p id="status-detail">支持 ChatGPT（含项目会话）、Codex Web、DeepSeek Web</p></div></section><section class="status"><span id="tab-dot"></span><div><strong id="tab-title">检查当前标签…</strong><p id="tab-detail">请打开具体会话页面</p></div></section>
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AttnWall</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+<header><img class="mark" src="icons/attnwall-48.png" width="32" height="32" alt=""><strong>AttnWall</strong><label class="sr-only" for="language-select">界面语言</label><select id="language-select" data-language-select aria-label="界面语言"><option value="zh-CN">简体中文</option><option value="en">English</option></select><small id="extension-version"></small></header>
 <main>
-<div class="step"><b>1</b><div><strong>在 AttnWall 复制配置</strong><p>打开 AttnWall → 设置 → 浏览器扩展 →「复制连接配置」</p></div></div>
-<div class="step"><b>2</b><div><strong>粘贴连接配置</strong><p>配置只保存在当前浏览器，不会上传到网页站点。</p></div></div>
-<textarea id="connection" placeholder="粘贴从 AttnWall 复制的连接配置 JSON" rows="3" aria-label="AttnWall 连接配置"></textarea>
-<div class="actions"><button class="primary" id="connect">连接 AttnWall</button><button id="disconnect">断开</button></div>
-<div class="step"><b>3</b><div><strong>打开一个会话页面</strong><p>保持对应网页标签打开，才能同步消息、发送回复。</p></div></div>
-<div class="site-links"><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT ↗</a><a href="https://chatgpt.com/codex" target="_blank" rel="noreferrer">Codex Web ↗</a><a href="https://chat.deepseek.com/" target="_blank" rel="noreferrer">DeepSeek ↗</a></div>
-<p class="hint">首次打开会话会静默导入可见的历史；新消息遵循 AttnWall 的通知规则。网页关闭时无法代发回复。</p>
-<p id="feedback" role="status"></p>
-</main><footer><button id="dashboard">打开 AttnWall 管理页面 ↗</button><span>仅使用公开网页界面 · 不读取 Cookie</span></footer>
-<script src="popup.js"></script>
+  <section class="status" aria-live="polite"><span id="dot" class="dot" aria-hidden="true"></span><div><strong id="status-title">检查连接…</strong><p id="status-detail"></p></div></section>
+  <section class="status tab-status"><span id="tab-dot" class="dot" aria-hidden="true"></span><div><strong id="tab-title">检查当前页…</strong><p id="tab-detail"></p></div></section>
+  <details id="connection-settings"><summary>连接配置</summary><label class="sr-only" for="connection">AttnWall 连接配置</label><textarea id="connection" placeholder="粘贴连接配置" rows="3" spellcheck="false"></textarea><div class="actions"><button class="primary" id="connect" disabled>连接</button></div></details>
+  <p id="feedback" role="status"></p>
+  <nav class="site-links" aria-label="AI 应用"><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT ↗</a><a href="https://chatgpt.com/codex" target="_blank" rel="noreferrer">Codex Web ↗</a><a href="https://chat.deepseek.com/" target="_blank" rel="noreferrer">DeepSeek ↗</a></nav>
+</main>
+<footer><button id="dashboard">打开 AttnWall ↗</button><button id="disconnect" disabled>断开</button></footer>
+<script src="i18n.js"></script><script src="popup.js"></script>
 </body></html>

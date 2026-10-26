@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AttnWall Web Bridge",
-  "version": "0.3.6",
+  "version": "0.3.12",
   "description": "Connect ChatGPT chats, Codex Web tasks and DeepSeek Web chats to your self-hosted AttnWall.",
   "permissions": [
     "storage",
@@ -22,7 +22,12 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "AttnWall Web Bridge"
+    "default_title": "AttnWall Web Bridge",
+    "default_icon": {
+      "16": "icons/attnwall-16.png",
+      "32": "icons/attnwall-32.png",
+      "48": "icons/attnwall-48.png"
+    }
   },
   "content_scripts": [
     {
@@ -31,10 +36,17 @@
         "https://chat.deepseek.com/*"
       ],
       "js": [
+        "i18n.js",
         "dom.js",
         "content.js"
       ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "icons": {
+    "16": "icons/attnwall-16.png",
+    "32": "icons/attnwall-32.png",
+    "48": "icons/attnwall-48.png",
+    "128": "icons/attnwall-128.png"
+  }
 }

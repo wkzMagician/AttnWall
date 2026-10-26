@@ -196,8 +196,8 @@ test('Event-anchored batching is idle until first arrival and restarts after lon
   assert.equal(notify.nextAt,null,'The idle state does not show a fixed future timer');
   const later=Date.now()+4*3600000;
   s.completeRun(sid,'run-b',{at:later});
-  assert.equal(notify.nextAt,later+20*60000);
-  await notify.tick(later+20*60000);
+  assert.equal(notify.nextAt,later,'A long task is due on completion, without another full interval');
+  await notify.tick(later);
   assert.equal(s.pendingNotifications().length,0);
   assert.equal(notify.nextAt,null);
 }));test('Batch only at boundary, DND suppresses, Instant bypasses',()=>fixture(async(s,dir)=>{

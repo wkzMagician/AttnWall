@@ -56,11 +56,15 @@ export class Store {
       'CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), mime TEXT NOT NULL, name TEXT NOT NULL, bytes BLOB NOT NULL, created_at INTEGER NOT NULL);' +      'CREATE TABLE IF NOT EXISTS run_completions (session_id TEXT NOT NULL REFERENCES sessions(id), run_id TEXT NOT NULL, completed_at INTEGER NOT NULL, status TEXT NOT NULL, PRIMARY KEY(session_id,run_id));' +
       "CREATE TABLE IF NOT EXISTS notification_events (id TEXT PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,broadcast_at INTEGER);" +
       "CREATE TABLE IF NOT EXISTS push_deliveries (event_id TEXT NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,endpoint TEXT NOT NULL,device_name TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL,lease_until INTEGER,code INTEGER,reason TEXT,PRIMARY KEY(event_id,endpoint));" +
+      'CREATE TABLE IF NOT EXISTS remote_devices (id TEXT PRIMARY KEY,registered_at INTEGER NOT NULL,last_seen_at INTEGER NOT NULL);' +
+      'CREATE TABLE IF NOT EXISTS remote_deliveries (device_id TEXT NOT NULL REFERENCES remote_devices(id) ON DELETE CASCADE,event_id TEXT NOT NULL,payload TEXT NOT NULL,created_at INTEGER NOT NULL,acknowledged_at INTEGER,PRIMARY KEY(device_id,event_id));' +
+      'CREATE INDEX IF NOT EXISTS ix_remote_pending ON remote_deliveries(device_id,acknowledged_at,created_at);' +
       'CREATE INDEX IF NOT EXISTS ix_push_due ON push_deliveries(state,next_at);' +
       "CREATE TABLE IF NOT EXISTS session_creations (id TEXT PRIMARY KEY,host TEXT NOT NULL,title TEXT NOT NULL,cwd TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',session_id TEXT,error TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);" +
       'CREATE INDEX IF NOT EXISTS ix_messages_notify ON messages(priority,notified_at,created_at);' +
       'CREATE INDEX IF NOT EXISTS ix_replies ON replies(state,created_at);'
     );
+    this.db.exec('CREATE TABLE IF NOT EXISTS focus_periods (started_at INTEGER NOT NULL, ends_at INTEGER NOT NULL)');
     // Additive migration for existing installations.
     if(!this.db.prepare('PRAGMA table_info(sessions)').all().some(x=>x.name==='instant_mode')) this.db.exec('ALTER TABLE sessions ADD COLUMN instant_mode INTEGER NOT NULL DEFAULT 0');
     if(!this.db.prepare('PRAGMA table_info(sessions)').all().some(x=>x.name==='activity_at')) this.db.exec('ALTER TABLE sessions ADD COLUMN activity_at INTEGER NOT NULL DEFAULT 0');
@@ -82,6 +86,16 @@ export class Store {
       this.db.exec("ALTER TABLE messages ADD COLUMN run_id TEXT NOT NULL DEFAULT ''");
       // Upgrade: retire old per-message push queue, preserving all unread messages.
       this.db.prepare("UPDATE messages SET notified_at=? WHERE role='agent' AND notified_at IS NULL").run(Date.now());
+    }
+    if(!this.db.prepare('PRAGMA table_info(messages)').all().some(x=>x.name==='focus_held')){
+      this.db.exec('ALTER TABLE messages ADD COLUMN focus_held INTEGER NOT NULL DEFAULT 0');
+      // Recover unread, unnotified results from the latest focus session during upgrade.
+      this.db.prepare(`UPDATE messages AS m SET focus_held=1
+        WHERE m.role='agent' AND m.read_at IS NULL AND m.notified_at IS NOT NULL
+          AND m.kind NOT IN ('approval','userInput') AND m.run_id<>''
+          AND m.rowid=(SELECT last.rowid FROM messages last WHERE last.session_id=m.session_id AND last.run_id=m.run_id AND last.role='agent' AND last.kind NOT IN ('approval','userInput') ORDER BY last.created_at DESC,last.rowid DESC LIMIT 1)
+          AND EXISTS (SELECT 1 FROM run_completions c JOIN focus_periods f ON c.completed_at>=f.started_at AND c.completed_at<f.ends_at WHERE c.session_id=m.session_id AND c.run_id=m.run_id AND f.started_at=(SELECT MAX(started_at) FROM focus_periods))
+          AND NOT EXISTS (SELECT 1 FROM notification_events e, json_each(e.payload,'$.messageIds') ids WHERE ids.value=m.id)`).run();
     }
     this.db.exec('CREATE TABLE IF NOT EXISTS run_starts (session_id TEXT NOT NULL REFERENCES sessions(id),run_id TEXT NOT NULL,started_at INTEGER NOT NULL,PRIMARY KEY(session_id,run_id));CREATE INDEX IF NOT EXISTS ix_run_starts_time ON run_starts(started_at);CREATE INDEX IF NOT EXISTS ix_messages_run ON messages(session_id,run_id,role,created_at)');
     this.db.exec(`INSERT OR IGNORE INTO run_starts
@@ -106,6 +120,20 @@ export class Store {
       this.db.prepare('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k,JSON.stringify(v));
     }
     return this.settings();
+  }
+  focusStatus(now=Date.now()) {
+    const period=this.db.prepare('SELECT started_at,ends_at FROM focus_periods WHERE started_at<=? AND ends_at>? ORDER BY started_at DESC LIMIT 1').get(now,now);
+    return period?{startedAt:period.started_at,endsAt:period.ends_at}:null;
+  }
+  startFocus(minutes,now=Date.now()) {
+    if(!Number.isInteger(minutes)||minutes<1||minutes>1440)throw new Error('Focus duration must be 1..1440 minutes');
+    this.stopFocus(now);
+    this.db.prepare('INSERT INTO focus_periods(started_at,ends_at) VALUES (?,?)').run(now,now+minutes*60000);
+    return this.focusStatus(now);
+  }
+  stopFocus(now=Date.now()) {
+    this.db.prepare('UPDATE focus_periods SET ends_at=? WHERE started_at<=? AND ends_at>?').run(now,now,now);
+    return null;
   }
   session({host='local',runtime,nativeId,title,cwd='',status='idle',updatedAt=Date.now(),activityAt=null,sourceUrl=''}) {
     if(!['codex','dsh','codex-web','deepseek-web','chatgpt-web'].includes(runtime)||!nativeId||!host) throw new Error('Unsupported runtime/session');
@@ -155,8 +183,11 @@ export class Store {
     }else if(role==='agent'&&!silent&&runId){
       const completion=this.db.prepare('SELECT completed_at FROM run_completions WHERE session_id=? AND run_id=?').get(sessionId,runId);
       if(completion){
-        const released=this.db.prepare("SELECT notified_at FROM messages WHERE session_id=? AND run_id=? AND role='agent' AND kind NOT IN ('approval','userInput') AND notified_at IS NOT NULL LIMIT 1").get(sessionId,runId);
-        if(released)this.markInstantNotified(id,released.notified_at);
+        const released=this.db.prepare("SELECT id,notified_at,focus_held FROM messages WHERE session_id=? AND run_id=? AND role='agent' AND kind NOT IN ('approval','userInput') AND notified_at IS NOT NULL ORDER BY focus_held DESC,created_at DESC,rowid DESC LIMIT 1").get(sessionId,runId);
+        if(released){
+          this.markInstantNotified(id,released.notified_at);
+          if(released.focus_held){this.db.prepare('UPDATE messages SET focus_held=0 WHERE id=?').run(released.id);this.db.prepare('UPDATE messages SET focus_held=1 WHERE id=?').run(id);}
+        }
         else this.releaseCompletedRun(sessionId,runId,completion.completed_at);
       }
     }
@@ -171,8 +202,34 @@ export class Store {
     if(inserted.changes){
       const insert=this.db.prepare('INSERT INTO push_deliveries(event_id,endpoint,device_name,next_at) VALUES (?,?,?,?)');
       for(const row of this.subscriptions())if(!targetId||targetId(row.endpoint))insert.run(id,row.endpoint,row.device_name,at);
+      // Each registered remote keeps its own copy until it confirms receipt.
+      // This survives expiry of the independent Web Push delivery attempt.
+      if(broadcast&&['batch','instant'].includes(payload.kind))this.db.prepare(
+        'INSERT OR IGNORE INTO remote_deliveries(device_id,event_id,payload,created_at) SELECT id,?,?,? FROM remote_devices'
+      ).run(id,JSON.stringify(notice),at);
     }
     return notice;
+  }
+  syncRemote(deviceId,{allowBatch=true,limit=50,now=Date.now()}={}){
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const registered=this.db.prepare('INSERT OR IGNORE INTO remote_devices VALUES (?,?,?)').run(deviceId,now,now);
+      this.db.prepare('UPDATE remote_devices SET last_seen_at=? WHERE id=?').run(now,deviceId);
+      if(registered.changes){
+        // On first connection recover retained, already-released unread events;
+        // a newly registered page may itself have been offline during an upgrade.
+        this.db.prepare("INSERT OR IGNORE INTO remote_deliveries(device_id,event_id,payload,created_at) SELECT ?,e.id,e.payload,e.created_at FROM notification_events e WHERE e.kind IN ('batch','instant') AND EXISTS (SELECT 1 FROM json_each(e.payload,'$.messageIds') ids JOIN messages m ON m.id=ids.value WHERE m.read_at IS NULL AND m.notified_at IS NOT NULL)").run(deviceId);
+      }
+      this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+    const pageSize=Math.min(100,Math.max(1,limit));
+    const rows=this.db.prepare("SELECT event_id,payload FROM remote_deliveries WHERE device_id=? AND acknowledged_at IS NULL AND (? OR json_extract(payload,'$.kind')!='batch') ORDER BY created_at,event_id LIMIT ?").all(deviceId,allowBatch?1:0,pageSize+1);
+    return {rows:rows.slice(0,pageSize),hasMore:rows.length>pageSize};
+  }
+  acknowledgeRemote(deviceId,ids,now=Date.now()){
+    const update=this.db.prepare('UPDATE remote_deliveries SET acknowledged_at=? WHERE device_id=? AND event_id=? AND acknowledged_at IS NULL');
+    let count=0;for(const id of ids)count+=update.run(now,deviceId,id).changes;
+    return count;
   }
   pendingBroadcasts(now=Date.now()){return this.db.prepare('SELECT id,payload FROM notification_events WHERE broadcast_at IS NULL AND expires_at>? ORDER BY created_at,id').all(now);}
   claimPushDeliveries(now=Date.now(),allowBatch=true){
@@ -204,7 +261,19 @@ export class Store {
   completeRun(sessionId,runId,{status='completed',at=Date.now()}={}){
     if(!this.sessionById(sessionId)||typeof runId!=='string'||!runId.trim()||runId.length>180)throw new Error('Invalid run completion');
     if(!['completed','failed','interrupted'].includes(status))throw new Error('Invalid run status');
-    if(this.db.prepare('SELECT 1 FROM run_completions WHERE session_id=? AND run_id=?').get(sessionId,runId))return null;
+    const previous=this.db.prepare('SELECT status,completed_at FROM run_completions WHERE session_id=? AND run_id=?').get(sessionId,runId);
+    if(previous){
+      // Older Codex readers could mistake an unloaded, still-running turn for
+      // a failed completion. Accept its later verified success without replaying
+      // an already released notification or moving a valid completion's clock.
+      if(status!=='completed'||previous.status==='completed'||at<=previous.completed_at)return null;
+      this.db.exec('BEGIN');
+      try{
+        this.db.prepare('UPDATE run_completions SET status=?,completed_at=? WHERE session_id=? AND run_id=?').run(status,at,sessionId,runId);
+        const last=this.releaseCompletedRun(sessionId,runId,at);
+        this.db.exec('COMMIT');return last;
+      }catch(e){this.db.exec('ROLLBACK');throw e;}
+    }
     this.db.exec('BEGIN');
     try{
       this.db.prepare('INSERT INTO run_completions VALUES (?,?,?,?)').run(sessionId,runId,at,status);
@@ -216,22 +285,16 @@ export class Store {
     }catch(e){this.db.exec('ROLLBACK');throw e;}
   }
   releaseCompletedRun(sessionId,runId,at){
-      const last=this.db.prepare("SELECT * FROM messages WHERE session_id=? AND run_id=? AND role='agent' AND notified_at IS NULL AND kind NOT IN ('approval','userInput') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(sessionId,runId);
-      if(last){
-        if(last.priority==='instant'&&!this.setting('instantEnabled')){
-          this.db.prepare("UPDATE messages SET priority='normal' WHERE session_id=? AND run_id=? AND notified_at IS NULL").run(sessionId,runId);
-          last.priority='normal';
-        }
-        if(last.priority==='instant'){
-          this.db.prepare("UPDATE messages SET notified_at=? WHERE session_id=? AND run_id=? AND role='agent' AND notified_at IS NULL").run(at,sessionId,runId);
-          this.enqueueNotification({kind:'instant',title:'Instant · '+this.sessionById(sessionId).title,body:last.body.slice(0,180),sessionId,messageIds:[last.id]},{id:'instant:'+last.id,at});
-        }
-        else {
-          this.db.prepare("UPDATE messages SET queued_at=0 WHERE session_id=? AND run_id=? AND notified_at IS NULL").run(sessionId,runId);
-          this.db.prepare('UPDATE messages SET queued_at=? WHERE id=?').run(at,last.id);
-        }
+    const last=this.db.prepare("SELECT * FROM messages WHERE session_id=? AND run_id=? AND role='agent' AND notified_at IS NULL AND kind NOT IN ('approval','userInput') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(sessionId,runId);
+    if(last){
+      this.db.prepare("UPDATE messages SET notified_at=?,queued_at=0 WHERE session_id=? AND run_id=? AND role='agent' AND notified_at IS NULL").run(at,sessionId,runId);
+      if(this.focusStatus(at))this.db.prepare('UPDATE messages SET focus_held=1 WHERE id=?').run(last.id);
+      else {
+        const english=this.setting('locale')==='en';
+        this.enqueueNotification({kind:'instant',title:(english?'Completed · ':'任务完成 · ')+this.sessionById(sessionId).title,body:last.body.slice(0,180),sessionId,messageIds:[last.id]},{id:'instant:'+last.id,at:Date.now()});
       }
-      return last;
+    }
+    return last;
   }
   instantMode(id,enabled){
     if(!this.sessionById(id))throw new Error('Unknown session');
@@ -251,15 +314,24 @@ export class Store {
       AND last.run_id=m.run_id AND last.role='agent' AND last.kind NOT IN ('approval','userInput')
       ORDER BY last.created_at DESC,last.rowid DESC LIMIT 1))`;
   }
+  focusVisibilityFilter(now=Date.now()){
+    const time=Math.trunc(now);
+    return `(m.kind IN ('approval','userInput') OR NOT EXISTS (
+      SELECT 1 FROM run_completions c JOIN focus_periods f
+        ON c.completed_at>=f.started_at AND c.completed_at<f.ends_at
+      WHERE c.session_id=m.session_id AND c.run_id=m.run_id
+        AND f.started_at<=${time} AND f.ends_at>${time}
+    ))`;
+  }
   readyInbox(limit=100){
-    return this.db.prepare("SELECT m.*,s.title,s.runtime,s.host FROM messages m JOIN sessions s ON s.id=m.session_id WHERE m.role='agent' AND m.read_at IS NULL AND (m.notified_at IS NOT NULL OR (m.priority='instant' AND m.kind IN ('approval','userInput'))) AND "+this.attentionFilter()+" ORDER BY m.created_at DESC LIMIT ?").all(Math.min(500,Math.max(1,limit)));
+    return this.db.prepare("SELECT m.*,s.title,s.runtime,s.host FROM messages m JOIN sessions s ON s.id=m.session_id WHERE m.role='agent' AND m.read_at IS NULL AND (m.notified_at IS NOT NULL OR (m.priority='instant' AND m.kind IN ('approval','userInput'))) AND "+this.attentionFilter()+" AND "+this.focusVisibilityFilter()+" ORDER BY m.created_at DESC LIMIT ?").all(Math.min(500,Math.max(1,limit)));
   }
   readyUnreadCount(sessionId=null){
-    const sql="SELECT COUNT(*) count FROM messages m WHERE m.role='agent' AND m.read_at IS NULL AND (m.notified_at IS NOT NULL OR (m.priority='instant' AND m.kind IN ('approval','userInput'))) AND "+this.attentionFilter();
+    const sql="SELECT COUNT(*) count FROM messages m WHERE m.role='agent' AND m.read_at IS NULL AND (m.notified_at IS NOT NULL OR (m.priority='instant' AND m.kind IN ('approval','userInput'))) AND "+this.attentionFilter()+" AND "+this.focusVisibilityFilter();
     return sessionId?this.db.prepare(sql+' AND session_id=?').get(sessionId).count:this.db.prepare(sql).get().count;
   }
   readySessions(){
-    const counts=new Map(this.db.prepare("SELECT m.session_id,COUNT(*) count FROM messages m WHERE m.role='agent' AND m.read_at IS NULL AND (m.notified_at IS NOT NULL OR (m.priority='instant' AND m.kind IN ('approval','userInput'))) AND "+this.attentionFilter()+" GROUP BY m.session_id").all().map(r=>[r.session_id,r.count]));
+    const counts=new Map(this.db.prepare("SELECT m.session_id,COUNT(*) count FROM messages m WHERE m.role='agent' AND m.read_at IS NULL AND (m.notified_at IS NOT NULL OR (m.priority='instant' AND m.kind IN ('approval','userInput'))) AND "+this.attentionFilter()+" AND "+this.focusVisibilityFilter()+" GROUP BY m.session_id").all().map(r=>[r.session_id,r.count]));
     return this.sessions().map(s=>({...s,unread:counts.get(s.id)||0}));
   }
   unreadCount(sessionId=null) {
@@ -268,8 +340,8 @@ export class Store {
       : this.db.prepare("SELECT COUNT(*) count FROM messages WHERE role='agent' AND read_at IS NULL").get().count;
   }
   markAllRead(sessionId=null, now=Date.now()) {
-    const query = "UPDATE messages SET read_at=?,notified_at=COALESCE(notified_at,?) WHERE role='agent' AND read_at IS NULL"
-      + (sessionId?" AND session_id=?":"");
+    const query = "UPDATE messages AS m SET read_at=?,notified_at=COALESCE(notified_at,?) WHERE m.role='agent' AND m.read_at IS NULL AND "+this.focusVisibilityFilter(now)
+      + (sessionId?" AND m.session_id=?":"");
     return sessionId
       ? this.db.prepare(query).run(now,now,sessionId).changes
       : this.db.prepare(query).run(now,now).changes;

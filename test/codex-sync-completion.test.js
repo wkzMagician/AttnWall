@@ -12,7 +12,7 @@ test('Unchanged top threads do not starve completed runs below the read budget',
   adapter.ready=true;
   const threads=Array.from({length:5},(_,i)=>({id:'thread-'+i,updatedAt:100-i}));
   adapter.rpc.request=async()=>({data:threads});
-  adapter.readRecent=async id=>{reads.push(id);return {turns:[{id:id+'-run',status:'completed',items:[{id:'final',type:'agentMessage',text:'Result'}]}]};};
+  adapter.readRecent=async id=>{reads.push(id);return {turns:[{id:id+'-run-'+threads.find(t=>t.id===id).updatedAt,status:'completed',items:[{id:'final',type:'agentMessage',text:'Result'}]}]};};
   try{
     await adapter.sync();
     assert.equal(reads.length,3);

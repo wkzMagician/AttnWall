@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { RpcProcess } from './rpc.js';
 import { queueCodexMessage,codexQueueCommand } from './codex-queue.js';
 const runTime=(value,fallback=Date.now())=>Number(value)>0?(Number(value)<1e12?Number(value)*1000:Number(value)):fallback;
+const pendingCodexTurn=turn=>turn.status==='inProgress'||turn.status==='interrupted'&&!turn.completedAt;
 export function extractText(content) {
   if(typeof content==='string') return content;
   if(Array.isArray(content)) return content.map(x=>x.text||x.value||'').join('\n');
@@ -12,7 +14,7 @@ export class CodexAdapter {
   constructor(onMessage=()=>{},onSession=()=>{},onComplete=()=>{},onStart=()=>{}) {
     this.onMessage=onMessage;this.onSession=onSession;this.onComplete=onComplete;this.onStart=onStart;
     this.rpc=new RpcProcess(process.env.CODEX_BIN||'codex',['app-server','--listen','stdio://']);
-    this.ready=false;this.lastSeen=new Set();this.readVersions=new Map();this.unsupported=new Set();this.pendingApprovals=new Map();
+    this.ready=false;this.lastSeen=new Set();this.pollState=new Map();this.pollSequence=0;this.historicalTurns=new Map();this.unsupported=new Set();this.pendingApprovals=new Map();
     this.queuedThreads=new Map();
     this.writers=new Map();
     this.discoveryStartedAt=Math.floor(Date.now()/1000);this.discoveryReady=false;this.baselineThreads=new Set();
@@ -33,7 +35,7 @@ export class CodexAdapter {
       if(method==='turn/completed'){
         this.onSession({runtime:'codex',nativeId:p.threadId,status:'idle'});
         const runId=p.turnId||p.turn?.id;
-        if(p.threadId&&runId)this.onComplete({runtime:'codex',nativeId:p.threadId,runId:String(runId),at:runTime(p.turn?.completedAt),status:p.turn?.status==='failed'?'failed':'completed'});
+        if(p.threadId&&runId)this.onComplete({runtime:'codex',nativeId:p.threadId,runId:String(runId),at:runTime(p.turn?.completedAt),status:['completed','failed','interrupted'].includes(p.turn?.status)?p.turn.status:'completed'});
         this.closeWriter(p.threadId,rpc);
       }
       if(method==='turn/started'){
@@ -100,42 +102,78 @@ export class CodexAdapter {
   }
   async sync(){
     if(!this.ready) await this.start();
-    let cursor=null;let total=0;let reads=0;
-    do{
+    const threads=new Map();
+    let cursor=null;
+    for(let page=0;page<3;page++){
       const result=await this.rpc.request('thread/list',{cursor,limit:100,sortKey:'updated_at'});
       for(const thread of result.data||[]){
         if(!thread.id)continue;
         if(!this.discoveryReady)this.baselineThreads.add(thread.id);
-        const newThread=!this.lastSeen.has(thread.id);
-        this.onSession({runtime:'codex',nativeId:thread.id,title:thread.name||thread.preview||'Codex thread',
-          cwd:thread.cwd||'',status:this.unsupported.has(thread.id)?'incompatible':this.queuedThreads.has(thread.id)||thread.status?.type==='active'?'active':'idle',updatedAt:Date.now(),activityAt:(thread.updatedAt||thread.createdAt||0)*1000});
-        const revision=Number(thread.updatedAt)||0;
-        const changed=!revision||this.readVersions.get(thread.id)!==revision||thread.status?.type==='active';
-        if(changed&&!this.unsupported.has(thread.id)&&reads<3&&!this.queuedThreads.has(thread.id)){
-          reads++;
-          try{
-            const read=await this.readRecent(thread.id);
-            for(const turn of read.turns||[]){
-              const createdWhileWatching=!this.baselineThreads.has(thread.id)&&Number(thread.createdAt||0)>=this.discoveryStartedAt;
-              const turnStartedWhileWatching=Number(turn.startedAt||0)>=this.discoveryStartedAt;
-              const silent=newThread&&!(this.discoveryReady&&(createdWhileWatching||turnStartedWhileWatching));
-              if(turn.status==='inProgress'||!silent)this.onStart({runtime:'codex',nativeId:thread.id,runId:String(turn.id),at:runTime(turn.startedAt)});
-              if(!['completed','failed','interrupted'].includes(turn.status))continue;
-              for(const item of turn.items||[])if(item.type==='agentMessage')this.ingestItem(thread.id,turn.id,item,silent);
-              // Other Desktop/CLI writers do not stream completion events to this
-              // app-server. Reconcile terminal runs after importing their messages.
-              // Historical imports stay read; the hub deduplicates completions.
-              this.onComplete({runtime:'codex',nativeId:thread.id,runId:turn.id,at:runTime(turn.completedAt),status:turn.status==='completed'?'completed':'failed'});
-            }
-            if(!(read.turns||[]).some(turn=>turn.status==='inProgress'))this.readVersions.set(thread.id,revision);
-            this.lastSeen.add(thread.id);
-          }catch(e){if(String(e.message).includes('paginated_threads')){this.unsupported.add(thread.id);this.onSession({runtime:'codex',nativeId:thread.id,status:'incompatible'});}else console.warn('[Codex] Read thread failed:',e.message);}
-        }
-        total++;
+        threads.set(thread.id,thread);
       }
-      cursor=result.nextCursor||null;
-    }while(cursor&&total<300);
+      // Always revisit the first page for new threads, and rotate the remaining
+      // pages: stale list timestamps must not hide older, active conversations.
+      cursor=page===0?(this.discoveryCursor||result.nextCursor):result.nextCursor;
+      if(!cursor)break;
+    }
+    this.discoveryCursor=cursor||null;
+    const now=Date.now();
+    const candidates=(await Promise.all([...threads.values()].map(async thread=>{
+        const previous=this.pollState.get(thread.id);
+        this.onSession({runtime:'codex',nativeId:thread.id,title:thread.name||thread.preview||'Codex thread',
+          cwd:thread.cwd||'',status:this.unsupported.has(thread.id)?'incompatible':this.queuedThreads.has(thread.id)||thread.status?.type==='active'||previous?.active?'active':'idle',updatedAt:now,activityAt:(thread.updatedAt||thread.createdAt||0)*1000});
+        if(this.unsupported.has(thread.id)||this.queuedThreads.has(thread.id))return null;
+        let signature=String(thread.updatedAt||0);
+        // Desktop writers can leave thread/list.updatedAt unchanged. File
+        // metadata detects their output without hydrating conversation history.
+        if(thread.path)try{const file=await stat(thread.path);signature+=':'+file.mtimeMs+':'+file.size;}catch{/* Timed revalidation also covers unavailable paths. */}
+        const changed=!Number(thread.updatedAt)||!previous||previous.signature!==signature;
+        const active=previous?.active||thread.status?.type==='active';
+        if(!changed&&!active&&now-previous.checkedAt<60000)return null;
+        return {thread,signature,attempt:previous?.attempt||0,priority:active||!!previous&&changed||this.discoveryReady&&Number(thread.createdAt||0)>=this.discoveryStartedAt};
+    }))).filter(Boolean).sort((a,b)=>a.attempt-b.attempt);
+    // Reserve a read for the oldest candidate so busy or failing top threads
+    // cannot indefinitely starve another conversation's completion.
+    const selected=candidates.filter(candidate=>candidate.priority).slice(0,2);
+    for(const candidate of candidates)if(selected.length<3&&!selected.includes(candidate))selected.push(candidate);
+    for(const {thread,signature} of selected){
+      const state=this.pollState.get(thread.id)||{};
+      state.attempt=++this.pollSequence;this.pollState.set(thread.id,state);
+      try{
+        const read=await this.readRecent(thread.id);
+        const active=this.reconcile(thread,read,{initial:!this.discoveryReady});
+        Object.assign(state,{signature,checkedAt:now,active});
+      }catch(e){if(String(e.message).includes('paginated_threads')){this.unsupported.add(thread.id);this.onSession({runtime:'codex',nativeId:thread.id,status:'incompatible'});}else console.warn('[Codex] Read thread failed:',e.message);}
+    }
     this.discoveryReady=true;
+  }
+  reconcile(thread,read,{initial=false}={}){
+    const historical=this.historicalTurns.get(thread.id)||new Set();
+    this.historicalTurns.set(thread.id,historical);
+    const newThread=!this.lastSeen.has(thread.id);
+    for(const turn of read.turns||[]){
+      // An unloaded Desktop turn is reported as interrupted while its writer
+      // is still running. A missing end time is not a completion signal.
+      const pending=pendingCodexTurn(turn);
+      const createdWhileWatching=!this.baselineThreads.has(thread.id)&&Number(thread.createdAt||0)>=this.discoveryStartedAt;
+      const started=runTime(turn.startedAt,0),ended=runTime(turn.completedAt,0);
+      const live=started>=this.discoveryStartedAt*1000||ended>=this.discoveryStartedAt*1000;
+      const old=!!(ended||started)&&!live;
+      const silent=!pending&&(historical.has(turn.id)||initial||old||newThread&&!live&&!createdWhileWatching);
+      if(silent)historical.add(turn.id);
+      if(pending||!silent)this.onStart({runtime:'codex',nativeId:thread.id,runId:String(turn.id),at:runTime(turn.startedAt)});
+      if(pending||!['completed','failed','interrupted'].includes(turn.status))continue;
+      for(const item of turn.items||[])if(item.type==='agentMessage')this.ingestItem(thread.id,turn.id,item,silent);
+      this.onComplete({runtime:'codex',nativeId:thread.id,runId:turn.id,at:runTime(turn.completedAt),status:turn.status});
+    }
+    const latest=read.turns?.at(-1);
+    const active=!!latest&&pendingCodexTurn(latest);
+    this.onSession({runtime:'codex',nativeId:thread.id,title:read.name||thread.name||thread.preview||'Codex thread',cwd:read.cwd||thread.cwd||'',
+      status:active?'active':'idle',activityAt:runTime(read.updatedAt,0)});
+    const state=this.pollState.get(thread.id)||{};
+    state.active=active;this.pollState.set(thread.id,state);
+    this.lastSeen.add(thread.id);
+    return !!active;
   }
   async readRecent(nativeId){
     // Metadata and bounded pages only: never hydrate the full conversation.
@@ -155,6 +193,9 @@ export class CodexAdapter {
   async history(nativeId){
     if(!this.ready)await this.start();
     const result=await this.readRecent(nativeId);
+    // A user opening history can race the background poll. Reconcile live
+    // results first so the silent backfill cannot consume their message IDs.
+    this.reconcile({...result,id:nativeId},result);
     const turns=result.turns||[];
     const messages=[];
     for(const turn of turns){
@@ -164,13 +205,14 @@ export class CodexAdapter {
       let order=0;
       for(const item of turn.items||[]){
         if(item.type!=='agentMessage'&&item.type!=='userMessage')continue;
+        if(item.type==='agentMessage'&&pendingCodexTurn(turn))continue;
         const role=item.type==='userMessage'?'user':'agent';
         const body=role==='user'
           ? (item.content||[]).filter(x=>x.type==='text').map(x=>x.text||'').join('\n')
           : item.text;
         if(!body?.trim())continue;
         messages.push({runtime:'codex',nativeId,externalId:'turn:'+turn.id+':'+item.id,
-          role,body,createdAt:base+order++,silent:true});
+          role,body,runId:String(turn.id),createdAt:base+order++,silent:true});
       }
     }
     return messages;
@@ -192,7 +234,7 @@ export class CodexAdapter {
       const baseline=new Set((thread.turns||[]).flatMap(t=>(t.items||[]).filter(i=>i.type==='userMessage').map(i=>i.id)));
       const receipt=await this.queuePrompt(nativeId,text,{image});
       const watched=this.queuedThreads.get(nativeId)||{
-        pending:[],completed:new Set((thread.turns||[]).filter(t=>['completed','failed','interrupted'].includes(t.status)).map(t=>t.id))
+        pending:[],completed:new Set((thread.turns||[]).filter(t=>!pendingCodexTurn(t)&&['completed','failed','interrupted'].includes(t.status)).map(t=>t.id))
       };
       watched.pending.push({text,baseline,baselineTurns:new Set((thread.turns||[]).map(t=>t.id)),queueId:receipt.queueId,imagePath:receipt.imagePath});
       this.queuedThreads.set(nativeId,watched);
@@ -229,11 +271,11 @@ export class CodexAdapter {
           if(pending){pending.itemId=item.id;pending.turnId=turn.id;assigned.add(item.id);}
         }
         if(!watched.completed.has(turn.id))this.onStart({runtime:'codex',nativeId,runId:String(turn.id),at:runTime(turn.startedAt)});
-        if(watched.completed.has(turn.id)||!['completed','failed','interrupted'].includes(turn.status))continue;
+        if(watched.completed.has(turn.id)||pendingCodexTurn(turn)||!['completed','failed','interrupted'].includes(turn.status))continue;
         // A polled in-progress item can retain its ID as its text streams.
         // Import the terminal snapshot so de-duplication cannot freeze partial text.
         for(const item of turn.items||[])if(item.type==='agentMessage')this.ingestItem(nativeId,turn.id,item);
-        this.onComplete({runtime:'codex',nativeId,runId:turn.id,at:runTime(turn.completedAt),status:turn.status==='completed'?'completed':'failed'});
+        this.onComplete({runtime:'codex',nativeId,runId:turn.id,at:runTime(turn.completedAt),status:turn.status});
         watched.completed.add(turn.id);
       }
       watched.pending=watched.pending.filter(p=>{

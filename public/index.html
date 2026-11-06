@@ -27,13 +27,14 @@
       <aside class="sidebar" aria-label="会话导航">
         <button id="inbox-nav" class="navigation active"><span class="nav-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z M4 14h5l2 3h2l2-3h5"/></svg></span><span>收件箱</span><span class="counter" id="unread-count">0</span></button>
         <div class="section-heading sessions-heading"><span>会话 <span id="session-filter-summary" class="session-filter-summary" aria-live="polite"></span></span><button id="attach-button" class="small-action" title="添加会话" aria-label="添加会话">＋</button></div>
-        <label class="session-range-control"><select id="session-range" aria-label="会话活动时间"><option value="1d">最近 24 小时</option><option value="7d" selected>最近一周</option><option value="30d">最近一个月</option><option value="all">全部会话</option></select></label>
+        <label class="session-range-control"><select id="session-range" aria-label="会话活动时间"><option value="1d">最近 24 小时</option><option value="7d">最近一周</option><option value="30d">最近一个月</option><option value="all" selected>全部会话</option></select></label>
         <input id="session-search" class="session-search" type="search" autocomplete="off" placeholder="搜索会话" aria-label="搜索会话">
         <div id="session-list" class="session-list"></div>
       </aside>
       <main class="content">
         <section id="inbox-view">
           <div class="page-title"><h1>收件箱 <small id="inbox-window" class="muted"></small></h1><button class="text-button hidden" id="mark-all">全部已读</button></div>
+          <div class="setting-card focus-controls"><div class="field-row"><label for="focus-minutes">番茄钟时长（分钟）</label><input id="focus-minutes" type="number" min="1" max="1440" value="25"></div><div class="settings-actions"><button id="focus-start" class="primary" type="button">开始番茄钟</button><button id="focus-stop" class="outline hidden" type="button">结束番茄钟</button><span id="focus-status" role="status"></span></div><p class="muted">番茄钟期间隐藏完成的消息，结束后显示并通知。</p></div>
           <div id="delivery-status" class="delivery-status hidden" role="status"><span>待投递 <strong id="stat-queue">0</strong></span><span id="delivery-text"></span></div>
           <div id="inbox-items" class="inbox-items"></div>
         </section>
@@ -41,17 +42,17 @@
           <div class="conversation-header"><button id="back-button" aria-label="返回收件箱" class="icon-button mobile-back">←</button><div class="conversation-title"><div class="conversation-source" id="conversation-runtime"></div><h1 id="conversation-name" data-i18n-skip>会话</h1><p id="conversation-path" class="muted" data-i18n-skip></p></div><div class="conversation-tools"><button class="text-button" id="mark-session-read">标为已读</button></div></div>
           <div class="history-toolbar"><span id="history-status" class="muted" role="status"></span><button type="button" id="history-retry" class="text-button hidden">重试</button><button type="button" id="history-older" class="text-button hidden">更早消息</button></div>
           <div id="conversation-messages" class="conversation-messages"></div>
-          <form id="compose" class="compose"><textarea id="compose-text" aria-label="回复消息" rows="2" maxlength="10000" placeholder="回复…"></textarea><div id="compose-attachment-preview" class="compose-attachment-preview hidden"></div><div class="compose-actions"><label id="compose-image-label" class="compose-image-label" for="compose-image"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9 M6 14l8-8"/></svg> 图片<input id="compose-image" type="file" accept="image/png,image/jpeg,image/webp" hidden></label><button id="instant-toggle" class="compose-instant" type="button" aria-pressed="false" aria-label="开启快速模式" title="任务完成后立即通知">快速模式：关</button><button type="submit" class="primary">发送 ↑</button></div></form>
+          <form id="compose" class="compose"><textarea id="compose-text" aria-label="回复消息" rows="2" maxlength="10000" placeholder="回复…"></textarea><div id="compose-attachment-preview" class="compose-attachment-preview hidden"></div><div class="compose-actions"><label id="compose-image-label" class="compose-image-label" for="compose-image"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9 M6 14l8-8"/></svg> 图片<input id="compose-image" type="file" accept="image/png,image/jpeg,image/webp" hidden></label><button id="instant-toggle" class="compose-instant hidden" type="button" aria-pressed="false" aria-label="开启快速模式" title="任务完成后立即通知">快速模式：关</button><button type="submit" class="primary">发送 ↑</button></div></form>
         </section>
         <section id="settings-view" class="hidden">
           <div class="page-title"><h1>设置</h1></div>
           <form id="settings-form" class="settings-form">
             <div class="setting-card">
               <div class="field-row"><label for="language-select">界面语言</label><select id="language-select" data-language-select aria-label="界面语言"><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
-              <div class="field-row"><label for="interval">提醒间隔（分钟）</label><input id="interval" type="number" min="1" max="1440" value="20" required></div>
+              <div class="hidden"><div class="field-row"><label for="interval">提醒间隔（分钟）</label><input id="interval" type="number" min="1" max="1440" value="20" required></div>
               <label class="switch-row"><span>允许即时通知</span><input id="instant-enabled" type="checkbox"></label>
               <label class="switch-row"><span>免打扰</span><input id="dnd-enabled" type="checkbox" aria-controls="dnd-schedule"></label>
-              <div id="dnd-schedule"><div class="time-fields"><div><label for="dnd-start">开始</label><input id="dnd-start" type="time" required></div><div><label for="dnd-end">结束</label><input id="dnd-end" type="time" required></div></div><div class="field-row"><label for="time-zone">时区</label><input id="time-zone" type="text" required></div></div>
+              <div id="dnd-schedule"><div class="time-fields"><div><label for="dnd-start">开始</label><input id="dnd-start" type="time" required></div><div><label for="dnd-end">结束</label><input id="dnd-end" type="time" required></div></div><div class="field-row"><label for="time-zone">时区</label><input id="time-zone" type="text" required></div></div></div>
             </div>
             <div class="settings-actions"><button type="submit" class="primary">保存</button><span id="settings-feedback" class="muted" role="status"></span></div>
           </form>

@@ -1,3 +1,4 @@
+if(typeof importScripts==='function')importScripts('/remote-receipts.js');
 self.addEventListener('install',()=>self.skipWaiting());
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
 self.addEventListener('push',event=>{
@@ -12,7 +13,13 @@ self.addEventListener('push',event=>{
     ? Promise.resolve().then(()=>count===0&&typeof self.navigator.clearAppBadge==='function'
       ? self.navigator.clearAppBadge():self.navigator.setAppBadge(count)).catch(()=>{})
     : Promise.resolve();
-  event.waitUntil(Promise.all([self.registration.showNotification(payload.title,opts),badgeTask]));
+  const receipts=self.AttnWallReceipts;
+  const noticeTask=receipts&&payload.notificationId&&payload.kind!=='test'
+    ? receipts.process(payload,()=>self.registration.showNotification(payload.title,opts)).then(async status=>{
+        if(status!=='busy')await receipts.acknowledge([payload.notificationId]);
+      }).catch(()=>{/* Reconnect sync retries an unconfirmed receipt. */})
+    : self.registration.showNotification(payload.title,opts);
+  event.waitUntil(Promise.all([noticeTask,badgeTask]));
 });
 self.addEventListener('notificationclick',event=>{
   event.notification.close();

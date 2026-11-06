@@ -14,7 +14,7 @@
 ## What you can do
 
 - See conversations and completed replies from supported platforms in one inbox.
-- Set notification timing and quiet hours, or mark a conversation as Instant.
+- Start a focus timer to hold completed tasks and their notifications until focus ends. Outside focus time, completed tasks notify immediately.
 - Reply from the web app and send supported images.
 - Get web push notifications and use AttnWall as an installable app on your phone.
 - Connect more than one computer to the same self-hosted inbox.
@@ -43,6 +43,7 @@ Open the AttnWall address from your phone. For remote access and push notificati
 ## A few things to know
 
 - AttnWall is self-hosted for one owner. Your conversations and settings are stored on your server.
+- A registered browser reconnects and syncs missed unread alerts from the server; the server retains each device's pending alerts until that device confirms receipt. Browser storage keeps the device identity and prevents duplicate alerts after retries.
 - Web integrations read conversations shown in the supported browser pages. A conversation must be opened at least once to connect it.
 - DSH sessions created outside AttnWall may need to be connected by their session ID.
 - Keep your Access key and connector credentials private. For remote access, use a private network such as [Tailscale](https://tailscale.com/) and HTTPS; don’t expose the server directly to the public internet.

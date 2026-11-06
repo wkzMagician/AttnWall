@@ -90,7 +90,7 @@ export async function handleBrowserBridge(req,res,url,{store,secrets,notify,broa
         const sessionId=data.host+':'+c.runtime+':'+c.nativeId;
         if(!store.sessionById(sessionId))continue;
         const last=store.completeRun(sessionId,c.runId,{status:'completed',at:Number.isFinite(c.at)&&c.at>0&&c.at<=Date.now()+300000?c.at:Date.now()});
-        if(last?.priority==='instant')void notify.instant({...last,title:store.sessionById(sessionId).title}).catch(console.error);
+        if(last)void notify.drain().catch(console.error);
       }
       if(added||data.starts?.length||data.sessions?.length||data.completions?.length)broadcast('update',{kind:'browserSync',added});
       respond(res,200,{ok:true,added},origin);return;

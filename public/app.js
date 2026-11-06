@@ -1,5 +1,6 @@
 import {createBadgeSynchronizer} from './app-badge.js';
 import {i18n} from './i18n.js';
+import './remote-receipts.js';
 const $=(id)=>document.getElementById(id);
 const state={sessions:[],inbox:[],unreadCount:0,settings:{},selected:null,view:'inbox',historyData:null,historyRequested:new Set(),instantOverride:new Map(),pushDevices:[],pushReport:null,nextBatchAt:null,queuedNormal:0,pushSubscribed:false,refreshing:false,sendingReply:false};
 let localeSynced=false;
@@ -7,7 +8,8 @@ const escapeHtml=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt
 const esc=escapeHtml;
 const when=(ts)=>new Intl.DateTimeFormat(i18n.getLocale(),{hour:'2-digit',minute:'2-digit',month:'2-digit',day:'2-digit'}).format(new Date(ts));
 const humanTime=(ts)=>new Intl.DateTimeFormat(i18n.getLocale(),{hour:'2-digit',minute:'2-digit'}).format(new Date(ts));
-let toastTimer,refreshTimer,sse;
+let toastTimer,refreshTimer,sse,stateLoadTask,remoteSyncTask,remoteSyncAgain=false,lastWorkerUpdate=0,authenticationRequired=false;
+const remoteReceipts=globalThis.AttnWallReceipts;
 // Only the released unread total is ever passed to the OS badge.
 const syncAppBadge=createBadgeSynchronizer(navigator);
 
@@ -20,10 +22,11 @@ async function api(method,path,data){
   return result;
 }
 function showLogin(){
+  authenticationRequired=true;
   $('login').classList.remove('hidden');$('application').classList.add('hidden');
   if(sse){sse.close();sse=null;}
 }
-function showApplication(){$('login').classList.add('hidden');$('application').classList.remove('hidden');}
+function showApplication(){authenticationRequired=false;$('login').classList.add('hidden');$('application').classList.remove('hidden');}
 function setConnected(ok){$('connection-label').textContent=ok?'':'连接中断';$('connection-label').classList.toggle('hidden',ok);}
 function dndNow(cfg){
   if(!cfg.dndEnabled||cfg.dndStart===cfg.dndEnd)return false;
@@ -35,10 +38,15 @@ function dndNow(cfg){
   return a<b?n>=a&&n<b:n>=a||n<b;
 }
 function refreshClock(){
-  const pending=state.nextBatchAt!==null;
-  $('delivery-status').classList.toggle('hidden',!pending);
-  $('stat-queue').textContent=state.queuedNormal;
-  $('delivery-text').textContent=dndNow(state.settings)?'免打扰至 '+state.settings.dndEnd:state.nextBatchAt?(state.queuedNormal===0&&Date.now()>=state.nextBatchAt?'计时已到，等待任务完成':'提醒时间 '+humanTime(state.nextBatchAt)):'';
+  const active=state.focus&&state.focus.endsAt>Date.now();
+  if(state.focus&&!active){state.focus=null;requestRefresh();}
+  $('focus-start').classList.toggle('hidden',!!active);
+  $('focus-stop').classList.toggle('hidden',!active);
+  $('focus-minutes').disabled=!!active;
+  const remaining=active?Math.ceil((state.focus.endsAt-Date.now())/1000):0;
+  const english=i18n.getLocale()==='en';
+  $('focus-status').textContent=active?(english?'Focus ends in ':'专注剩余 ')+Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):(english?'Notifications on':'完成后通知已开启');
+  $('delivery-status').classList.add('hidden');
 }
 
 function sessionNode(s){
@@ -51,7 +59,7 @@ function sessionNode(s){
 const SESSION_RANGES={ '1d':24*60*60*1000,'7d':7*24*60*60*1000,'30d':30*24*60*60*1000,all:Infinity };
 function restoredSessionRange(){
   try{const value=localStorage.getItem('attnwall.sessionRange');if(value in SESSION_RANGES)return value;}catch{}
-  return '7d';
+  return 'all';
 }
 function sessionRangeMatches(s,now=Date.now()){
   return state.sessionRange==='all'||(Number(s.activity_at)>0 && Number(s.activity_at)>=now-SESSION_RANGES[state.sessionRange]);
@@ -118,9 +126,9 @@ function render(){
   if(state.view==='settings'){renderSettings();renderPushDevices();}
 }
 async function loadState(){
-  if(state.refreshing)return;
+  if(stateLoadTask)return stateLoadTask;
   state.refreshing=true;
-  try{
+  stateLoadTask=(async()=>{
     const p=await api('GET','/api/state');
     for(const session of p.sessions){
       if(!state.instantOverride.has(session.id))continue;
@@ -128,7 +136,7 @@ async function loadState(){
       if(Boolean(session.instant_mode)===Boolean(pending))state.instantOverride.delete(session.id);
       else session.instant_mode=pending;
     }
-    Object.assign(state,{sessions:p.sessions,inbox:p.inbox,unreadCount:p.unreadCount??p.inbox.length,settings:p.settings,nextBatchAt:p.nextBatchAt,queuedNormal:p.queuedNormal,pushDevices:p.pushDevices||[],pushReport:p.pushReport||null});
+    Object.assign(state,{sessions:p.sessions,inbox:p.inbox,unreadCount:p.unreadCount??p.inbox.length,settings:p.settings,focus:p.focus,nextBatchAt:p.nextBatchAt,queuedNormal:p.queuedNormal,pushDevices:p.pushDevices||[],pushReport:p.pushReport||null});
     const serverLocale=p.settings?.locale;
     if(serverLocale&&!i18n.hasUserChanged()&&serverLocale!==i18n.getLocale())i18n.setLocale(serverLocale);
     if(!localeSynced){
@@ -137,24 +145,86 @@ async function loadState(){
     }
     setConnected(true);showApplication();render();
     if(state.view==='conversation'&&state.selected)await loadConversation();
-  }finally{state.refreshing=false;}
+  })();
+  try{return await stateLoadTask;}finally{state.refreshing=false;stateLoadTask=null;}
 }
 function requestRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>loadState().catch(e=>{setConnected(false);console.error(e);}),200);}
+async function refreshRemoteState(){
+  // A request already in flight may predate the recovered event.
+  if(stateLoadTask)try{await stateLoadTask;}catch{}
+  await loadState();
+}
+async function displayRemoteNotice(n){
+  if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
+  const options={body:n.body,tag:n.notificationId?'attnwall:'+n.notificationId:n.kind==='batch'?'attnwall-batch':undefined,icon:'/icons/attnwall-coral-v1-192.png'};
+  const registration=state.pushSubscribed?await navigator.serviceWorker?.getRegistration('/') : null;
+  if(registration?.showNotification){
+    await registration.showNotification(n.title,{...options,data:{url:n.sessionId?'/?session='+encodeURIComponent(n.sessionId):'/'}});
+    return;
+  }
+  const notice=new Notification(n.title,options);
+  notice.onclick=()=>{window.focus();if(n.sessionId)openSession(n.sessionId);notice.close();};
+}
+async function receiveRemoteNotice(n){
+  await refreshRemoteState();
+  const result=await remoteReceipts.process(n,()=>displayRemoteNotice(n));
+  if(result!=='busy'&&n.notificationId)await remoteReceipts.acknowledge([n.notificationId]);
+  return result;
+}
+function updateRemoteWorker(){
+  if(!navigator.serviceWorker||Date.now()-lastWorkerUpdate<60000)return;
+  lastWorkerUpdate=Date.now();
+  void navigator.serviceWorker.getRegistration('/').then(registration=>registration?.update?.()).catch(()=>{lastWorkerUpdate=0;});
+}
+async function syncRemote(){
+  if(remoteSyncTask){remoteSyncAgain=true;return remoteSyncTask;}
+  remoteSyncTask=(async()=>{
+    do{
+      remoteSyncAgain=false;
+      const deviceId=await remoteReceipts.deviceId();
+      let more=true,pages=0;
+      while(more&&pages++<50){
+        const batch=await api('POST','/api/remote/sync',{deviceId});
+        updateRemoteWorker();
+        await refreshRemoteState();
+        const acknowledged=[];
+        for(const event of batch.events||[]){
+          const result=await remoteReceipts.process(event,()=>displayRemoteNotice(event));
+          if(result!=='busy'&&event.notificationId)acknowledged.push(event.notificationId);
+        }
+        if(acknowledged.length)await remoteReceipts.acknowledge(acknowledged);
+        more=!!batch.hasMore&&(acknowledged.length>0||!batch.events?.length);
+      }
+      requestRefresh();
+    }while(remoteSyncAgain);
+  })();
+  try{await remoteSyncTask;}finally{remoteSyncTask=null;}
+}
 function connectEvents(){
   if(sse)sse.close();
   sse=new EventSource('/api/events');
   sse.addEventListener('update',requestRefresh);
   sse.addEventListener('notification',e=>{
     const n=JSON.parse(e.data);
-    if(!state.pushSubscribed && typeof Notification!=='undefined'&&Notification.permission==='granted'){
-      const notice=new Notification(n.title,{body:n.body,tag:n.notificationId?'attnwall:'+n.notificationId:n.kind==='batch'?'attnwall-batch':undefined,icon:'/icons/attnwall-coral-v1-192.png'});
-      notice.onclick=()=>{window.focus();if(n.sessionId)openSession(n.sessionId);notice.close();};
-    }
+    void receiveRemoteNotice(n).catch(()=>{/* The next sync retries any missing confirmation. */});
     requestRefresh();
   });
-  sse.onopen=()=>setConnected(true);
+  sse.onopen=()=>{setConnected(true);void syncRemote().catch(()=>setConnected(false));};
   sse.onerror=()=>setConnected(false);
 }
+function restoreRequestedSession(){
+  const requested=new URLSearchParams(location.search).get('session');
+  if(requested&&state.sessions.some(s=>s.id===requested))openSession(requested,{keepUrl:true});
+}
+async function recoverRemote(){
+  if(authenticationRequired)return;
+  if(sse)return syncRemote();
+  await loadState();if(!sse)connectEvents();restoreRequestedSession();
+}
+window.addEventListener('online',()=>{void recoverRemote().catch(()=>setConnected(false));});
+window.addEventListener('pageshow',()=>{if(sse)void recoverRemote().catch(()=>setConnected(false));});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void recoverRemote().catch(()=>setConnected(false));});
+setInterval(()=>{if(document.visibilityState==='visible')void recoverRemote().catch(()=>{});},30000);
 function navigate(view,{keepUrl=false}={}){
   $('application').classList.remove('show-sessions');
   state.view=view;render();
@@ -415,6 +485,14 @@ $('conversation-messages').addEventListener('click',async e=>{
   try{await api('POST','/api/replies/retry',{id:button.dataset.retry});toast('重新加入发送队列');await loadConversation();}
   catch(err){toast(err.message);}
 });
+async function changeFocus(action){
+  try{
+    const result=await api('POST','/api/focus',{action,minutes:Number($('focus-minutes').value)});
+    state.focus=result.focus;await loadState();refreshClock();
+  }catch(error){toast(error.message);}
+}
+$('focus-start').addEventListener('click',()=>changeFocus('start'));
+$('focus-stop').addEventListener('click',()=>changeFocus('stop'));
 $('settings-form').addEventListener('submit',async e=>{
   e.preventDefault();try{
     const dndEnabled=$('dnd-enabled').checked;
@@ -507,7 +585,7 @@ $('attach-form').addEventListener('submit',async e=>{
 });
 state.sessionRange=restoredSessionRange();
 $('session-range').value=state.sessionRange;
-setInterval(refreshClock,15000);
+setInterval(refreshClock,1000);
 detectPush();
 window.addEventListener('popstate',()=>{
   const requested=new URLSearchParams(location.search).get('session');
@@ -515,7 +593,5 @@ window.addEventListener('popstate',()=>{
   else navigate('inbox',{keepUrl:true});
 });
 loadState().then(()=>{
-  connectEvents();
-  const requested=new URLSearchParams(location.search).get('session');
-  if(requested&&state.sessions.some(s=>s.id===requested))openSession(requested,{keepUrl:true});
-}).catch(()=>showLogin());
+  if(!sse)connectEvents();restoreRequestedSession();
+}).catch(()=>{if(!authenticationRequired){showApplication();setConnected(false);}});

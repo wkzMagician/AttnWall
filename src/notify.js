@@ -26,32 +26,48 @@ export class NotificationScheduler {
       body:english?'If you can see this, Web Push is working on this device.':'如果看到了这条通知，说明设备的 Web Push 通道已正常工作。'
     },{deviceId:id,broadcast:false});
   }
-  start(){this.timer=setInterval(()=>this.tick().catch(console.error),5000);this.timer.unref?.();}
-  stop(){if(this.timer)clearInterval(this.timer);}
-  get nextAt(){
-    const firstStart=this.store.pendingBatchAnchor();
-    if(firstStart===null)return null;
-    const anchor=Math.max(firstStart,this.store.lastBatchAt());
-    return Math.max(anchor+this.store.setting('intervalMin')*60000,this.store.pendingCompletionAt()||0);
+  start(){this.timer=setInterval(()=>this.tick().catch(console.error),5000);this.timer.unref?.();this.scheduleFocusEnd();}
+  stop(){if(this.timer)clearInterval(this.timer);if(this.focusTimer)clearTimeout(this.focusTimer);}
+  scheduleFocusEnd(){
+    if(this.focusTimer)clearTimeout(this.focusTimer);
+    const focus=this.store.focusStatus();
+    if(focus){
+      this.focusTimer=setTimeout(()=>{this.focusTimer=null;void this.tick().catch(console.error);},Math.max(0,focus.endsAt-Date.now()));
+      this.focusTimer.unref?.();
+    }
   }
-  reset(){/* deadline follows task starts, the last actual batch release and completions */}
+  get nextAt(){return null;}
+  reset(){}
   async tick(now=Date.now()){
     if(this.ticking)return;
     this.ticking=true;
     try{
-      const due=this.nextAt;
-      if(due!==null&&now>=due&&!inDnd(now,this.store.settings())){
-        this.store.db.exec('BEGIN IMMEDIATE');
-        try{
-          const batch=this.store.claimNotificationBatch(now,due);
-          if(batch.length){
-            this.store.noteBatch(now);
+      // Release completions left in the former batch queue after upgrading.
+      this.store.db.exec('BEGIN IMMEDIATE');
+      try{
+        const pending=this.store.claimNotificationBatch(now);
+        for(const message of pending){
+          if(this.store.focusStatus(message.queued_at)){
+            this.store.db.prepare('UPDATE messages SET focus_held=1 WHERE id=?').run(message.id);
+          }else{
             const english=this.store.setting('locale')==='en';
-            this.store.enqueueNotification({kind:'batch',title:english?'AttnWall · '+batch.length+' new messages':'AttnWall · '+batch.length+' 条新消息',body:batch.slice(0,3).map(m=>m.title+': '+m.body.slice(0,40)).join(' | '),count:batch.length,messageIds:batch.map(message=>message.id)},{at:now});
+            this.store.enqueueNotification({kind:'instant',title:(english?'Completed · ':'任务完成 · ')+message.title,body:message.body.slice(0,180),sessionId:message.session_id,messageIds:[message.id]},{id:'instant:'+message.id,at:now});
           }
-          this.store.db.exec('COMMIT');
-        }catch(error){this.store.db.exec('ROLLBACK');throw error;}
-      }
+        }
+        const ready=this.store.db.prepare(`SELECT m.*,s.title FROM messages m JOIN sessions s ON s.id=m.session_id
+          WHERE m.focus_held=1 AND ${this.store.focusVisibilityFilter(now)} ORDER BY m.created_at,m.rowid`).all();
+        if(ready.length){
+          const unread=ready.filter(message=>message.read_at===null);
+          const clear=this.store.db.prepare('UPDATE messages SET focus_held=0 WHERE id=?');
+          for(const message of ready)clear.run(message.id);
+          if(unread.length){
+            const english=this.store.setting('locale')==='en';
+            this.store.enqueueNotification({kind:'instant',title:english?'Focus ended · '+unread.length+' completed':'番茄钟结束 · '+unread.length+' 条完成消息',body:unread.slice(0,3).map(message=>message.title+': '+message.body.slice(0,40)).join(' | '),count:unread.length,...(unread.length===1?{sessionId:unread[0].session_id}:{}),messageIds:unread.map(message=>message.id)},{at:now});
+          }
+        }
+        this.store.db.exec('COMMIT');
+        if(ready.length)this.broadcast('update',{kind:'focusCompleted'});
+      }catch(error){this.store.db.exec('ROLLBACK');throw error;}
       await this.drain(now);
     }finally{this.ticking=false;}
   }

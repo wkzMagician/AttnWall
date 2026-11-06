@@ -1,4 +1,8 @@
 const english = {
+  "番茄钟时长（分钟）": "Focus duration (minutes)",
+  "开始番茄钟": "Start focus",
+  "结束番茄钟": "End focus",
+  "番茄钟期间隐藏完成的消息，结束后显示并通知。": "Completed tasks appear in the inbox and trigger a notification after focus ends.",
   "计时已到，等待任务完成": "Timer elapsed, waiting for a task to finish",
   "访问密钥": "Access key",
   "登录": "Log in",

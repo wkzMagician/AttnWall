@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, extname, join, normalize } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Store, loadSecrets, secretEqual } from './core.js';
+import { Store, loadSecrets, secretEqual, inDnd } from './core.js';
 import { NotificationScheduler } from './notify.js';import { handleBrowserBridge } from './browser-bridge.js';
 
 const root=resolve(fileURLToPath(new URL('../public/',import.meta.url)));
@@ -70,7 +70,7 @@ const server=http.createServer(async(req,res)=>{
     if(u.pathname==='/api/browser/setup'&&req.method==='GET')
       return reply(res,200,{browserToken:secrets.browserToken,version:1});
     if(u.pathname==='/api/state'&&req.method==='GET')return reply(res,200,{
-      sessions:store.readySessions(),inbox:store.readyInbox(100),unreadCount:store.readyUnreadCount(),settings:store.settings(),nextBatchAt:notify.nextAt,
+      sessions:store.readySessions(),inbox:store.readyInbox(100),unreadCount:store.readyUnreadCount(),settings:store.settings(),focus:store.focusStatus(),nextBatchAt:notify.nextAt,
       queuedNormal:store.pendingNotifications().length,pushPublicKey:notify.publicKey(),
       pushDevices:notify.devices(),pushReport:notify.lastReport()
     });
@@ -99,6 +99,14 @@ const server=http.createServer(async(req,res)=>{
       if(!['codex','chatgpt-web','codex-web','deepseek-web'].includes(session.runtime))return reply(res,200,{history:null,note:'Runtime does not support historical synchronization'});
       const history=store.requestHistory(p.sessionId,{force:!!p.force});
       return reply(res,200,{history});
+    }
+    if(u.pathname==='/api/focus'&&req.method==='POST'){
+      const p=await body(req);
+      const focus=p.action==='start'?store.startFocus(p.minutes):p.action==='stop'?store.stopFocus():undefined;
+      if(focus===undefined)return fail(res,400,'Invalid focus action');
+      notify.scheduleFocusEnd();broadcast('update',{kind:'focus'});
+      if(p.action==='stop')void notify.tick().catch(console.error);
+      return reply(res,200,{focus});
     }
     if(u.pathname==='/api/settings'&&req.method==='POST'){
       const p=await body(req),settings=store.updateSettings(p);
@@ -157,6 +165,23 @@ const server=http.createServer(async(req,res)=>{
       const report=await notify.testDevice(p.deviceId);
       return reply(res,200,{report});
     }
+    if(u.pathname==='/api/remote/sync'&&req.method==='POST'){
+      const p=await body(req);
+      if(typeof p.deviceId!=='string'||!/^[a-zA-Z0-9_-]{16,100}$/.test(p.deviceId))return fail(res,400,'Invalid remote device');
+      const batch=store.syncRemote(p.deviceId,{allowBatch:!inDnd(Date.now(),store.settings())});
+      const events=[],obsolete=[];
+      for(const row of batch.rows){
+        const payload=JSON.parse(row.payload);
+        if(notify.hasUnread(payload))events.push(notify.notice(payload));else obsolete.push(row.event_id);
+      }
+      if(obsolete.length)store.acknowledgeRemote(p.deviceId,obsolete);
+      return reply(res,200,{events,hasMore:batch.hasMore});
+    }
+    if(u.pathname==='/api/remote/ack'&&req.method==='POST'){
+      const p=await body(req);
+      if(typeof p.deviceId!=='string'||!/^[a-zA-Z0-9_-]{16,100}$/.test(p.deviceId)||!Array.isArray(p.ids)||p.ids.length>100||p.ids.some(id=>typeof id!=='string'||!id||id.length>250))return fail(res,400,'Invalid remote acknowledgment');
+      return reply(res,200,{ok:true,acknowledged:store.acknowledgeRemote(p.deviceId,p.ids)});
+    }
     if(u.pathname==='/api/events'&&req.method==='GET'){
       res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
       res.write(': connected\n\n');listeners.add(res);
@@ -194,7 +219,7 @@ const server=http.createServer(async(req,res)=>{
         const sessionId=host+':'+completion.runtime+':'+completion.nativeId;
         if(!store.sessionById(sessionId))continue;
         const final=store.completeRun(sessionId,completion.runId,{status:completion.status||'completed',at:Number.isFinite(completion.at)&&completion.at>0&&completion.at<=Date.now()+300000?completion.at:Date.now()});
-        if(final?.priority==='instant')void notify.instant({...final,title:store.sessionById(sessionId).title}).catch(console.error);
+        if(final)void notify.drain().catch(console.error);
       }
       for(const h of (Array.isArray(p.historyComplete)?p.historyComplete:[]).slice(0,20)){
         const session=store.sessionById(h.sessionId);
